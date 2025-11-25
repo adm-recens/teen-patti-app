@@ -20,6 +20,11 @@ app.use(express.json());
 
 const SECRET = process.env.JWT_SECRET || "secret";
 
+// --- HEALTH CHECK / ROOT ROUTE ---
+app.get('/', (req, res) => {
+  res.send('Teen Patti Ledger Backend is running!');
+});
+
 // 1. LOGIN API
 app.post('/api/auth/login', async (req, res) => {
   const { username, password } = req.body;
