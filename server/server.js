@@ -28,14 +28,14 @@ app.get('/', (req, res) => {
 // 1. LOGIN API
 app.post('/api/auth/login', async (req, res) => {
   const { username, password } = req.body;
-  
+
   // Quick hack: Auto-create admin if not exists (for first run)
   if (username === 'admin') {
-     const exists = await prisma.user.findUnique({ where: { username: 'admin' }});
-     if (!exists) {
-       const hashed = bcrypt.hashSync('admin123', 10);
-       await prisma.user.create({ data: { username: 'admin', password: hashed, role: 'OPERATOR' }});
-     }
+    const exists = await prisma.user.findUnique({ where: { username: 'admin' } });
+    if (!exists) {
+      const hashed = bcrypt.hashSync('admin123', 10);
+      await prisma.user.create({ data: { username: 'admin', password: hashed, role: 'OPERATOR' } });
+    }
   }
 
   const user = await prisma.user.findUnique({ where: { username } });
@@ -73,11 +73,68 @@ app.post('/api/games/hand', async (req, res) => {
 });
 
 // 3. REAL-TIME SOCKET
+// --- IN-MEMORY STATE ---
+let gameState = null;
+const viewerRequests = new Map(); // socketId -> { name, socketId }
+const approvedViewers = new Set(); // socketId
+
+// 3. REAL-TIME SOCKET
 io.on('connection', (socket) => {
-  console.log('User connected');
-  socket.on('game_action', (data) => {
-    // Re-broadcast operator moves to viewers
-    socket.broadcast.emit('game_update', data);
+  console.log('User connected:', socket.id);
+
+  // --- OPERATOR EVENTS ---
+
+  // Operator sends latest state to sync server & viewers
+  socket.on('sync_state', (state) => {
+    gameState = state;
+    // Broadcast to all APPROVED viewers
+    const viewerIds = Array.from(approvedViewers);
+    viewerIds.forEach(vid => {
+      io.to(vid).emit('game_update', gameState);
+    });
+  });
+
+  // Operator approves a viewer
+  socket.on('resolve_access', ({ viewerId, approved }) => {
+    if (approved) {
+      approvedViewers.add(viewerId);
+      io.to(viewerId).emit('access_granted', gameState); // Send current state immediately
+    } else {
+      io.to(viewerId).emit('access_denied');
+    }
+    viewerRequests.delete(viewerId);
+    // Notify operator that list updated (optional, or just let them manage local state)
+  });
+
+  // --- VIEWER EVENTS ---
+
+  // Viewer requests access
+  socket.on('request_access', ({ name }) => {
+    viewerRequests.set(socket.id, { name, socketId: socket.id });
+    // Notify all operators (broadcasting to everyone for now, client filters by role)
+    io.emit('viewer_requested', { name, socketId: socket.id });
+  });
+
+  // Viewer/Operator reconnecting - send state if allowed
+  socket.on('join_game', ({ role }) => {
+    if (role === 'OPERATOR') {
+      if (gameState) socket.emit('game_update', gameState);
+
+      // Also send pending requests to operator
+      viewerRequests.forEach(req => {
+        socket.emit('viewer_requested', req);
+      });
+    } else if (role === 'VIEWER') {
+      if (approvedViewers.has(socket.id) && gameState) {
+        socket.emit('game_update', gameState);
+      }
+    }
+  });
+
+  socket.on('disconnect', () => {
+    console.log('User disconnected:', socket.id);
+    viewerRequests.delete(socket.id);
+    approvedViewers.delete(socket.id);
   });
 });
 

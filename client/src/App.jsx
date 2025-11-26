@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import {
   Eye,
   EyeOff,
@@ -19,14 +19,19 @@ import {
   Lock,
   Wifi,
   HelpCircle,
-  Info
+  Info,
+  Check
 } from 'lucide-react';
+import { io } from 'socket.io-client';
 
 // --- MOCK AUTH SYSTEM ---
 const MOCK_USERS = [
   { username: 'admin', role: 'OPERATOR', label: 'Table Operator' },
   { username: 'viewer', role: 'VIEWER', label: 'Live Audience' }
 ];
+
+// Initialize Socket
+const socket = io('http://localhost:3000');
 
 const TeenPattiApp = () => {
   // --- STATE MANAGEMENT ---
@@ -55,6 +60,11 @@ const TeenPattiApp = () => {
   const [selectedLogGameId, setSelectedLogGameId] = useState('current');
   const [lastHandResults, setLastHandResults] = useState({});
 
+  // Viewer Access State
+  const [viewerName, setViewerName] = useState('');
+  const [accessStatus, setAccessStatus] = useState('IDLE'); // IDLE, PENDING, GRANTED, DENIED
+  const [viewerRequests, setViewerRequests] = useState([]); // Array of { name, socketId }
+
   // --- LOGGING HELPER ---
   const createLogMsg = (msg) => `[${new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' })}] ${msg}`;
 
@@ -62,13 +72,95 @@ const TeenPattiApp = () => {
     setCurrentLogs(prev => [createLogMsg(message), ...prev]);
   };
 
+  // --- SOCKET & SYNC ---
+  useEffect(() => {
+    socket.on('connect', () => {
+      console.log('Connected to server');
+    });
+
+    socket.on('game_update', (serverState) => {
+      // If we are viewer, or if we are operator reconnecting
+      if (serverState) {
+        restoreState(serverState);
+      }
+    });
+
+    socket.on('viewer_requested', (request) => {
+      if (user?.role === 'OPERATOR') {
+        setViewerRequests(prev => {
+          if (prev.find(r => r.socketId === request.socketId)) return prev;
+          return [...prev, request];
+        });
+      }
+    });
+
+    socket.on('access_granted', (initialState) => {
+      setAccessStatus('GRANTED');
+      if (initialState) restoreState(initialState);
+      setView('GAME');
+    });
+
+    socket.on('access_denied', () => {
+      setAccessStatus('DENIED');
+    });
+
+    return () => {
+      socket.off('connect');
+      socket.off('game_update');
+      socket.off('viewer_requested');
+      socket.off('access_granted');
+      socket.off('access_denied');
+    };
+  }, [user]);
+
+  // Sync state to server whenever critical game state changes (Only Operator)
+  useEffect(() => {
+    if (user?.role === 'OPERATOR' && view === 'GAME') {
+      const currentState = {
+        players,
+        gameCount,
+        gameHistory,
+        gamePlayers,
+        pot,
+        currentStake,
+        activePlayerIndex,
+        currentLogs,
+        lastHandResults
+      };
+      socket.emit('sync_state', currentState);
+    }
+  }, [players, gameCount, gameHistory, gamePlayers, pot, currentStake, activePlayerIndex, currentLogs, lastHandResults, user, view]);
+
+  const restoreState = (state) => {
+    setPlayers(state.players || []);
+    setGameCount(state.gameCount || 1);
+    setGameHistory(state.gameHistory || []);
+    setGamePlayers(state.gamePlayers || []);
+    setPot(state.pot || 0);
+    setCurrentStake(state.currentStake || 20);
+    setActivePlayerIndex(state.activePlayerIndex !== undefined ? state.activePlayerIndex : 0);
+    setCurrentLogs(state.currentLogs || []);
+    setLastHandResults(state.lastHandResults || {});
+
+    // If we have active players, assume game is running
+    if (state.gamePlayers && state.gamePlayers.length > 0) {
+      setView('GAME');
+    }
+  };
+
   // --- AUTH HANDLERS ---
   const handleLogin = (username) => {
     const foundUser = MOCK_USERS.find(u => u.username === username);
     if (foundUser) {
       setUser(foundUser);
+      socket.emit('join_game', { role: foundUser.role });
+
       if (foundUser.role === 'VIEWER') {
-        setView('GAME');
+        setView('ACCESS_REQUEST');
+      } else {
+        // Operator goes to setup, or game if state restored
+        // (State restoration happens via socket event)
+        if (view !== 'GAME') setView('SETUP');
       }
     } else {
       alert("Invalid user. Use 'admin' or 'viewer'");
@@ -78,6 +170,20 @@ const TeenPattiApp = () => {
   const handleLogout = () => {
     setUser(null);
     setView('SETUP');
+    setAccessStatus('IDLE');
+    setViewerName('');
+  };
+
+  // --- VIEWER ACCESS ---
+  const requestAccess = () => {
+    if (!viewerName.trim()) return;
+    setAccessStatus('PENDING');
+    socket.emit('request_access', { name: viewerName });
+  };
+
+  const resolveViewerRequest = (socketId, approved) => {
+    socket.emit('resolve_access', { viewerId: socketId, approved });
+    setViewerRequests(prev => prev.filter(r => r.socketId !== socketId));
   };
 
   // --- CORE GAME LOGIC ---
@@ -375,6 +481,59 @@ const TeenPattiApp = () => {
     </div>
   );
 
+  const renderAccessRequest = () => (
+    <div className="min-h-screen bg-gradient-to-br from-slate-900 via-slate-800 to-slate-900 flex items-center justify-center p-4">
+      <div className="bg-white/10 backdrop-blur-xl border border-white/20 w-full max-w-sm rounded-3xl p-8 shadow-2xl relative">
+        <div className="text-center mb-8">
+          <Eye size={48} className="text-blue-400 mx-auto mb-4" />
+          <h2 className="text-2xl font-bold text-white">Request Access</h2>
+          <p className="text-slate-400 text-sm mt-2">Enter your name to request viewing access from the operator.</p>
+        </div>
+
+        {accessStatus === 'IDLE' && (
+          <div className="space-y-4">
+            <input
+              type="text"
+              value={viewerName}
+              onChange={(e) => setViewName(e.target.value)}
+              placeholder="Your Name"
+              className="w-full bg-slate-800/50 border border-slate-600 rounded-xl px-4 py-3 text-white placeholder:text-slate-500 focus:border-blue-500 focus:bg-slate-800 outline-none transition-all"
+            />
+            <button
+              onClick={requestAccess}
+              disabled={!viewerName.trim()}
+              className="w-full py-3 bg-blue-600 text-white rounded-xl font-bold hover:bg-blue-500 disabled:opacity-50 disabled:cursor-not-allowed transition-all"
+            >
+              Request Access
+            </button>
+            <button onClick={handleLogout} className="w-full py-3 text-slate-400 hover:text-white text-sm font-bold">Cancel</button>
+          </div>
+        )}
+
+        {accessStatus === 'PENDING' && (
+          <div className="text-center space-y-6">
+            <div className="w-16 h-16 border-4 border-blue-500 border-t-transparent rounded-full animate-spin mx-auto"></div>
+            <p className="text-white font-bold animate-pulse">Waiting for approval...</p>
+            <button onClick={handleLogout} className="text-slate-400 hover:text-white text-sm font-bold">Cancel Request</button>
+          </div>
+        )}
+
+        {accessStatus === 'DENIED' && (
+          <div className="text-center space-y-6">
+            <div className="w-16 h-16 bg-red-500/20 text-red-500 rounded-full flex items-center justify-center mx-auto">
+              <X size={32} />
+            </div>
+            <div>
+              <h3 className="text-xl font-bold text-white mb-2">Access Denied</h3>
+              <p className="text-slate-400 text-sm">The operator has denied your request.</p>
+            </div>
+            <button onClick={() => setAccessStatus('IDLE')} className="w-full py-3 bg-slate-700 text-white rounded-xl font-bold hover:bg-slate-600 transition-all">Try Again</button>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+
   const renderSetup = () => {
     if (user.role !== 'OPERATOR') {
       return (
@@ -548,7 +707,7 @@ const TeenPattiApp = () => {
           <div className="bg-slate-900 border-t border-white/10 p-6 shadow-[0_-10px_40px_-10px_rgba(0,0,0,0.5)] z-20 text-center backdrop-blur-md">
             <p className="font-bold text-slate-500 animate-pulse flex items-center justify-center gap-2">
               <span className="w-2 h-2 bg-slate-500 rounded-full"></span>
-              Waiting for Operator...
+              Live Audience View
             </p>
           </div>
         ) : (
@@ -698,6 +857,28 @@ const TeenPattiApp = () => {
       {user && view === 'SETUP' && renderSetup()}
       {user && view === 'GAME' && renderGame()}
       {user && view === 'CUSTOM_BID' && renderCustomBid()}
+      {user && view === 'ACCESS_REQUEST' && renderAccessRequest()}
+
+      {/* Viewer Request Notifications for Operator */}
+      {user?.role === 'OPERATOR' && viewerRequests.length > 0 && (
+        <div className="fixed top-4 right-4 z-[100] space-y-2">
+          {viewerRequests.map(req => (
+            <div key={req.socketId} className="bg-slate-800 border border-slate-600 p-4 rounded-xl shadow-2xl animate-in slide-in-from-right duration-300 w-80">
+              <div className="flex justify-between items-start mb-3">
+                <div>
+                  <h4 className="font-bold text-white">Viewer Request</h4>
+                  <p className="text-sm text-slate-400"><strong>{req.name}</strong> wants to watch.</p>
+                </div>
+                <span className="bg-blue-500/20 text-blue-400 text-[10px] font-bold px-2 py-1 rounded uppercase">New</span>
+              </div>
+              <div className="flex gap-2">
+                <button onClick={() => resolveViewerRequest(req.socketId, true)} className="flex-1 bg-green-600 hover:bg-green-500 text-white py-2 rounded-lg font-bold text-xs transition-colors">Allow</button>
+                <button onClick={() => resolveViewerRequest(req.socketId, false)} className="flex-1 bg-slate-700 hover:bg-slate-600 text-white py-2 rounded-lg font-bold text-xs transition-colors">Deny</button>
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
 
       {user && view === 'SIDESHOW_SELECT' && (
         <div className="fixed inset-0 bg-slate-900/95 backdrop-blur-sm z-50 flex flex-col animate-in fade-in duration-200">
@@ -800,64 +981,39 @@ const TeenPattiApp = () => {
           </div>
         </div>
       )}
-
-      {user && view === 'LOGS' && (
-        <div className="fixed inset-0 bg-slate-900 z-50 flex flex-col animate-in slide-in-from-bottom duration-300">
-          <div className="bg-slate-800 p-4 shadow-lg border-b border-slate-700 flex flex-col gap-4">
-            <div className="flex justify-between items-center">
-              <button onClick={() => setView('GAME')} className="text-white hover:text-gold-400 transition-colors"><ArrowLeft /></button>
-              <h2 className="font-bold text-lg text-white">Game Logs</h2>
-              <div className="w-6"></div>
-            </div>
-            <div className="mt-2">
-              <select
-                value={selectedLogGameId}
-                onChange={(e) => setSelectedLogGameId(e.target.value)}
-                className="w-full p-3 border border-slate-600 rounded-xl bg-slate-900 font-bold text-white outline-none focus:border-gold-500 transition-colors"
-              >
-                <option value="current">Current Hand (Active)</option>
-                {gameHistory.map(g => (
-                  <option key={g.id} value={g.id}>Game #{g.id} - Winner: {g.winner}</option>
-                ))}
-              </select>
-            </div>
-          </div>
-          <div className="flex-1 overflow-y-auto p-4 space-y-2 font-mono text-xs custom-scrollbar">
-            {(selectedLogGameId === 'current' ? currentLogs : (gameHistory.find(g => g.id === parseInt(selectedLogGameId))?.logs || [])).map((l, i) => (
-              <div key={i} className="bg-slate-800 p-3 border border-slate-700 rounded-lg shadow-sm text-slate-300">{l}</div>
-            ))}
-          </div>
-        </div>
-      )}
     </div>
   );
 };
 
 const LeaderboardModal = ({ sortedPlayers, onClose, onExport }) => (
-  <div className="fixed inset-0 bg-black/90 backdrop-blur-sm z-[60] flex items-center justify-center p-4 animate-in fade-in zoom-in-95 duration-200">
-    <div className="bg-slate-900 w-full max-w-md rounded-3xl max-h-[80vh] flex flex-col shadow-2xl border border-white/10">
-      <div className="p-6 border-b border-slate-700 flex justify-between items-center bg-slate-800/50 rounded-t-3xl">
-        <h2 className="font-bold text-xl text-white flex items-center gap-2">
-          <Trophy size={24} className="text-gold-500" /> Leaderboard
+  <div className="fixed inset-0 bg-black/90 backdrop-blur-sm z-[60] flex items-center justify-center p-6 animate-in fade-in zoom-in-95 duration-200">
+    <div className="bg-slate-900 w-full max-w-md rounded-3xl p-6 border border-white/10 shadow-2xl flex flex-col max-h-[80vh]">
+      <div className="flex justify-between items-center mb-6">
+        <h2 className="text-2xl font-black text-white flex items-center gap-2">
+          <BarChart3 className="text-gold-500" /> Leaderboard
         </h2>
-        <button onClick={onClose} className="text-slate-400 hover:text-white transition-colors"><X size={24} /></button>
+        <button onClick={onClose} className="p-2 hover:bg-white/10 rounded-full text-slate-400 hover:text-white transition-colors"><X size={24} /></button>
       </div>
-      <div className="overflow-y-auto p-2 flex-1 custom-scrollbar">
+
+      <div className="flex-1 overflow-y-auto custom-scrollbar space-y-2 pr-2">
         {sortedPlayers.map((p, i) => (
-          <div key={p.id} className="flex justify-between p-4 border-b border-slate-800 last:border-0 hover:bg-slate-800/50 transition-colors rounded-xl mx-2">
-            <div className="font-bold text-white flex items-center gap-4">
-              <span className={`w-8 h-8 rounded-lg flex items-center justify-center text-sm font-black ${i === 0 ? 'bg-gold-500 text-slate-900 shadow-lg shadow-gold-500/20' : i === 1 ? 'bg-slate-300 text-slate-900' : i === 2 ? 'bg-amber-700 text-white' : 'bg-slate-800 text-slate-500'}`}>{i + 1}</span>
-              {p.name}
+          <div key={p.id} className="bg-slate-800 p-4 rounded-xl flex justify-between items-center border border-slate-700">
+            <div className="flex items-center gap-3">
+              <div className={`w-8 h-8 rounded-lg flex items-center justify-center font-bold text-sm ${i === 0 ? 'bg-yellow-500 text-yellow-950' : i === 1 ? 'bg-slate-400 text-slate-900' : i === 2 ? 'bg-orange-700 text-orange-100' : 'bg-slate-700 text-slate-400'}`}>
+                {i + 1}
+              </div>
+              <span className="font-bold text-white">{p.name}</span>
             </div>
-            <div className={`font-mono font-bold text-lg ${p.sessionBalance >= 0 ? 'text-green-400' : 'text-red-400'}`}>
+            <span className={`font-mono font-bold ${p.sessionBalance >= 0 ? 'text-green-400' : 'text-red-400'}`}>
               {p.sessionBalance > 0 ? '+' : ''}{p.sessionBalance}
-            </div>
+            </span>
           </div>
         ))}
       </div>
-      <div className="p-6 border-t border-slate-700 bg-slate-800/50 rounded-b-3xl">
-        <button onClick={onExport} className="w-full py-4 bg-slate-800 text-white border border-slate-600 rounded-xl font-bold hover:bg-slate-700 hover:border-slate-500 transition-all flex items-center justify-center gap-2">
-          <Download size={20} /> Export CSV
+
+      <div className="mt-6 pt-4 border-t border-white/10">
+        <button onClick={onExport} className="w-full py-3 bg-slate-800 hover:bg-slate-700 text-white rounded-xl font-bold flex items-center justify-center gap-2 transition-all">
+          <Download size={18} /> Export CSV
         </button>
       </div>
     </div>
