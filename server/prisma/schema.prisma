@@ -15,12 +15,25 @@ model User {
   createdAt DateTime @default(now())
 }
 
+model GameSession {
+  id          Int        @id @default(autoincrement())
+  name        String     @unique
+  totalRounds Int
+  currentRound Int       @default(1)
+  isActive    Boolean    @default(true)
+  createdAt   DateTime   @default(now())
+  hands       GameHand[]
+}
+
 model GameHand {
   id        Int      @id @default(autoincrement())
   winner    String
   potSize   Int
   logs      Json     
   createdAt DateTime @default(now())
+  
+  sessionId Int?
+  session   GameSession? @relation(fields: [sessionId], references: [id])
 }
 
 model Player {
