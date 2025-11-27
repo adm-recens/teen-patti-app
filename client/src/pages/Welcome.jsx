@@ -2,6 +2,7 @@ import React, { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Trophy, ArrowRight, Play, User, History, Settings } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
+import DebugFooter from '../components/DebugFooter';
 
 const API_URL = import.meta.env.VITE_BACKEND_URL || 'http://localhost:3000';
 
@@ -18,7 +19,7 @@ const Welcome = () => {
     }, []);
 
     return (
-        <div className="min-h-screen bg-gradient-to-br from-slate-900 via-slate-800 to-slate-900 p-4 md:p-8">
+        <div className="min-h-screen bg-gradient-to-br from-slate-900 via-slate-800 to-slate-900 p-4 md:p-8 pb-12">
             <div className="max-w-7xl mx-auto">
                 {/* Header */}
                 <div className="flex justify-between items-center mb-12">
@@ -99,6 +100,7 @@ const Welcome = () => {
                     </div>
                 )}
             </div>
+            <DebugFooter />
         </div>
     );
 };
