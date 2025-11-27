@@ -27,8 +27,10 @@ import {
 import { io } from 'socket.io-client';
 
 // --- AUTH SYSTEM ---
+const API_URL = import.meta.env.VITE_BACKEND_URL || 'http://localhost:3000';
+
 // Initialize Socket (Lazy connect)
-const socket = io('http://localhost:3000', { autoConnect: false });
+const socket = io(API_URL, { autoConnect: false });
 
 const TeenPattiApp = () => {
   // --- STATE MANAGEMENT ---
@@ -190,7 +192,7 @@ const TeenPattiApp = () => {
     const password = 'admin123';
 
     try {
-      const res = await fetch('http://localhost:3000/api/auth/login', {
+      const res = await fetch(`${API_URL}/api/auth/login`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ username, password })
@@ -226,7 +228,7 @@ const TeenPattiApp = () => {
     if (!sessionName.trim()) return alert("Enter Session Name");
 
     try {
-      const res = await fetch('http://localhost:3000/api/sessions', {
+      const res = await fetch(`${API_URL}/api/sessions`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ name: sessionName, totalRounds })
@@ -449,7 +451,7 @@ const TeenPattiApp = () => {
 
     // Save to Server
     try {
-      const res = await fetch('http://localhost:3000/api/games/hand', {
+      const res = await fetch(`${API_URL}/api/games/hand`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
