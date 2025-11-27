@@ -5,6 +5,7 @@ const cors = require('cors');
 const { PrismaClient } = require('@prisma/client');
 const jwt = require('jsonwebtoken');
 const bcrypt = require('bcryptjs');
+const cookieParser = require('cookie-parser');
 
 const app = express();
 const server = http.createServer(app);
@@ -15,8 +16,12 @@ const io = new Server(server, {
   cors: { origin: "*", methods: ["GET", "POST"] }
 });
 
-app.use(cors());
+app.use(cors({
+  origin: "http://localhost:5173", // Vite default port
+  credentials: true
+}));
 app.use(express.json());
+app.use(cookieParser());
 
 const SECRET = process.env.JWT_SECRET || "secret";
 
@@ -44,7 +49,22 @@ app.post('/api/auth/login', async (req, res) => {
   }
 
   const token = jwt.sign({ id: user.id, role: user.role }, SECRET);
-  res.json({ token, user: { username: user.username, role: user.role } });
+
+  // Set HTTP-Only Cookie
+  res.cookie('token', token, {
+    httpOnly: true,
+    secure: false, // Set to true in production with HTTPS
+    sameSite: 'lax',
+    maxAge: 24 * 60 * 60 * 1000 // 1 day
+  });
+
+  res.json({ success: true, user: { username: user.username, role: user.role } });
+});
+
+// LOGOUT API
+app.post('/api/auth/logout', (req, res) => {
+  res.clearCookie('token');
+  res.json({ success: true });
 });
 
 // 2. SAVE GAME API
@@ -108,6 +128,20 @@ app.post('/api/games/hand', async (req, res) => {
   }
 });
 
+// 2.5 ACTIVE SESSIONS API (For Landing Page)
+app.get('/api/sessions/active', (req, res) => {
+  const activeList = [];
+  activeSessions.forEach((session, name) => {
+    activeList.push({
+      name: name,
+      currentRound: session.currentRound,
+      totalRounds: session.totalRounds,
+      playerCount: session.gameState?.players?.length || 0
+    });
+  });
+  res.json(activeList);
+});
+
 // 3. ADMIN API
 app.get('/api/admin/sessions', async (req, res) => {
   const sessions = await prisma.gameSession.findMany({
@@ -168,7 +202,19 @@ const activeSessions = new Map();
 
 // --- SOCKET MIDDLEWARE ---
 io.use((socket, next) => {
-  const token = socket.handshake.auth.token;
+  // Parse cookies from handshake headers
+  const cookieHeader = socket.handshake.headers.cookie;
+  let token = null;
+
+  if (cookieHeader) {
+    const cookies = cookieHeader.split(';').reduce((acc, cookie) => {
+      const [key, value] = cookie.trim().split('=');
+      acc[key] = value;
+      return acc;
+    }, {});
+    token = cookies.token;
+  }
+
   if (token) {
     jwt.verify(token, SECRET, (err, decoded) => {
       if (err) return next(new Error('Authentication error'));

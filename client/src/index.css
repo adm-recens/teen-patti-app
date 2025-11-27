@@ -54,4 +54,16 @@
   .poker-chip {
     @apply rounded-full shadow-chip flex items-center justify-center font-bold border-4 border-dashed border-white/20;
   }
+
+  .custom-scrollbar::-webkit-scrollbar {
+    width: 6px;
+  }
+
+  .custom-scrollbar::-webkit-scrollbar-track {
+    @apply bg-slate-100 rounded-full;
+  }
+
+  .custom-scrollbar::-webkit-scrollbar-thumb {
+    @apply bg-slate-300 rounded-full hover:bg-slate-400 transition-colors;
+  }
 }

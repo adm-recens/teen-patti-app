@@ -30,7 +30,10 @@ import { io } from 'socket.io-client';
 const API_URL = import.meta.env.VITE_BACKEND_URL || 'http://localhost:3000';
 
 // Initialize Socket (Lazy connect)
-const socket = io(API_URL, { autoConnect: false });
+const socket = io(API_URL, {
+  autoConnect: false,
+  withCredentials: true // Important for cookies
+});
 
 const TeenPattiApp = () => {
   // --- STATE MANAGEMENT ---
@@ -74,6 +77,31 @@ const TeenPattiApp = () => {
 
   // Admin State
   const [adminSessions, setAdminSessions] = useState([]);
+  const [adminUsers, setAdminUsers] = useState([]);
+
+  // Active Games (Landing Page)
+  const [activeGames, setActiveGames] = useState([]);
+
+  useEffect(() => {
+    if (view === 'WELCOME') {
+      fetch(`${API_URL}/api/sessions/active`)
+        .then(res => res.json())
+        .then(data => setActiveGames(data))
+        .catch(err => console.error("Failed to fetch active games", err));
+    }
+  }, [view]);
+
+  useEffect(() => {
+    if (view === 'ADMIN_DASHBOARD') {
+      fetch(`${API_URL}/api/admin/sessions`, { credentials: 'include' })
+        .then(res => res.json())
+        .then(data => setAdminSessions(data));
+
+      fetch(`${API_URL}/api/admin/users`, { credentials: 'include' })
+        .then(res => res.json())
+        .then(data => setAdminUsers(data));
+    }
+  }, [view]);
 
   // --- LOGGING HELPER ---
   const createLogMsg = (msg) => `[${new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' })}] ${msg}`;
@@ -195,13 +223,14 @@ const TeenPattiApp = () => {
       const res = await fetch(`${API_URL}/api/auth/login`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ username, password })
+        body: JSON.stringify({ username, password }),
+        credentials: 'include' // Send cookies
       });
       const data = await res.json();
 
-      if (data.token) {
+      if (data.success) {
         setUser(data.user);
-        socket.auth = { token: data.token };
+        // Socket automatically sends cookies now
         socket.connect();
         setView('SESSION_SETUP');
       } else {
@@ -212,7 +241,11 @@ const TeenPattiApp = () => {
     }
   };
 
-  const handleLogout = () => {
+  const handleLogout = async () => {
+    try {
+      await fetch(`${API_URL}/api/auth/logout`, { method: 'POST', credentials: 'include' });
+    } catch (e) { console.error(e); }
+
     setUser(null);
     socket.disconnect();
     setView('WELCOME');
@@ -507,27 +540,90 @@ const TeenPattiApp = () => {
   // --- VIEW COMPONENTS ---
 
   const renderWelcome = () => (
-    <div className="min-h-screen bg-gradient-to-br from-slate-900 via-slate-800 to-slate-900 flex items-center justify-center p-4">
-      <div className="text-center max-w-2xl">
-        <div className="mb-8 relative inline-block">
-          <div className="absolute inset-0 bg-gold-500 blur-3xl opacity-20 rounded-full"></div>
-          <div className="w-32 h-32 bg-gradient-to-br from-gold-400 to-gold-600 rounded-3xl rotate-3 flex items-center justify-center mx-auto shadow-2xl shadow-gold-500/30 relative z-10">
-            <Trophy size={64} className="text-white -rotate-3" />
+    <div className="min-h-screen bg-gradient-to-br from-slate-900 via-slate-800 to-slate-900 p-4 md:p-8">
+      <div className="max-w-7xl mx-auto">
+        {/* Header */}
+        <div className="flex justify-between items-center mb-12">
+          <div className="flex items-center gap-4">
+            <div className="w-12 h-12 bg-gradient-to-br from-gold-400 to-gold-600 rounded-xl rotate-3 flex items-center justify-center shadow-lg shadow-gold-500/20">
+              <Trophy size={24} className="text-white -rotate-3" />
+            </div>
+            <h1 className="text-3xl font-black text-white tracking-tight">
+              Teen <span className="text-transparent bg-clip-text bg-gradient-to-r from-gold-400 to-gold-200">Patti</span>
+            </h1>
           </div>
+          {/* Admin Entry Point (Hidden unless ram54) */}
+          {user?.username === 'ram54' && (
+            <button onClick={() => setView('ADMIN_DASHBOARD')} className="text-slate-500 hover:text-white transition-colors">
+              <Settings />
+            </button>
+          )}
+          {/* Login Button if not logged in */}
+          {!user && (
+            <button
+              onClick={() => setView('LOGIN_SELECT')}
+              className="px-6 py-2 bg-white/10 hover:bg-white/20 text-white font-bold rounded-xl transition-all"
+            >
+              Login / Start Game
+            </button>
+          )}
         </div>
-        <h1 className="text-5xl md:text-7xl font-black text-white tracking-tight mb-6">
-          Teen <span className="text-transparent bg-clip-text bg-gradient-to-r from-gold-400 to-gold-200">Patti</span>
-        </h1>
-        <p className="text-xl md:text-2xl text-slate-300 font-medium mb-10 leading-relaxed">
-          "There would only be 3 cards but the fun with friends is unlimitedd"
-        </p>
-        <button
-          onClick={() => { console.log('Clicked Lets have fun'); setView('LOGIN_SELECT'); }}
-          className="group relative inline-flex items-center gap-4 px-12 py-6 bg-gradient-to-r from-blue-600 to-blue-500 text-white rounded-2xl font-black text-xl shadow-2xl shadow-blue-500/40 hover:shadow-blue-500/60 hover:scale-105 transition-all duration-300"
-        >
-          <span>Lets have fun</span>
-          <ArrowRight className="group-hover:translate-x-1 transition-transform" />
-        </button>
+
+        {/* Hero Section */}
+        <div className="text-center mb-16">
+          <h2 className="text-4xl md:text-6xl font-black text-white mb-6">
+            Live Games
+          </h2>
+          <p className="text-xl text-slate-400 max-w-2xl mx-auto">
+            Join an active table or start your own session.
+          </p>
+        </div>
+
+        {/* Grid View */}
+        {activeGames.length === 0 ? (
+          <div className="text-center py-20 bg-white/5 rounded-3xl border border-white/10 backdrop-blur-sm">
+            <div className="w-20 h-20 bg-slate-800 rounded-full flex items-center justify-center mx-auto mb-6">
+              <Play size={32} className="text-slate-500" />
+            </div>
+            <h3 className="text-2xl font-bold text-white mb-2">No Active Games</h3>
+            <p className="text-slate-400 mb-8">There are no games running right now.</p>
+            <button
+              onClick={() => setView('LOGIN_SELECT')}
+              className="px-8 py-4 bg-gradient-to-r from-blue-600 to-blue-500 text-white rounded-xl font-bold text-lg shadow-xl shadow-blue-500/20 hover:scale-105 transition-all"
+            >
+              Start a New Game
+            </button>
+          </div>
+        ) : (
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+            {activeGames.map((game) => (
+              <div
+                key={game.name}
+                onClick={() => {
+                  setSessionName(game.name);
+                  setViewerName(''); // Reset viewer name
+                  setView('ACCESS_REQUEST');
+                }}
+                className="group bg-slate-800/50 hover:bg-slate-800 border border-white/10 hover:border-blue-500/50 rounded-2xl p-6 cursor-pointer transition-all duration-300 hover:-translate-y-1"
+              >
+                <div className="flex justify-between items-start mb-4">
+                  <div className="p-3 bg-blue-500/10 rounded-xl text-blue-400 group-hover:bg-blue-500 group-hover:text-white transition-colors">
+                    <Trophy size={24} />
+                  </div>
+                  <span className="px-3 py-1 bg-green-500/20 text-green-400 text-xs font-bold rounded-full flex items-center gap-1">
+                    <div className="w-2 h-2 bg-green-500 rounded-full animate-pulse"></div>
+                    LIVE
+                  </span>
+                </div>
+                <h3 className="text-xl font-bold text-white mb-2">{game.name}</h3>
+                <div className="flex items-center gap-4 text-slate-400 text-sm">
+                  <span className="flex items-center gap-1"><User size={14} /> {game.playerCount} Players</span>
+                  <span className="flex items-center gap-1"><History size={14} /> Round {game.currentRound}/{game.totalRounds}</span>
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
       </div>
     </div>
   );
@@ -603,13 +699,16 @@ const TeenPattiApp = () => {
 
   const renderAdminDashboard = () => (
     <div className="min-h-screen bg-slate-50 p-8">
-      <div className="max-w-4xl mx-auto">
-        <div className="flex items-center gap-4 mb-8">
-          <button onClick={() => setView('SESSION_SETUP')} className="p-2 bg-white rounded-xl shadow-sm border hover:bg-slate-50"><ArrowLeft /></button>
-          <h1 className="text-3xl font-black text-slate-900">Admin Dashboard</h1>
+      <div className="max-w-6xl mx-auto">
+        <div className="flex items-center justify-between mb-8">
+          <div className="flex items-center gap-4">
+            <button onClick={() => setView('WELCOME')} className="p-2 bg-white rounded-xl shadow-sm border hover:bg-slate-50"><ArrowLeft /></button>
+            <h1 className="text-3xl font-black text-slate-900">Admin Dashboard</h1>
+          </div>
+          <button onClick={handleLogout} className="text-red-500 font-bold hover:bg-red-50 px-4 py-2 rounded-xl transition-colors">Logout</button>
         </div>
 
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-6 mb-8">
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mb-8">
           <div className="bg-white p-6 rounded-2xl shadow-sm border border-slate-100">
             <h3 className="font-bold text-slate-500 uppercase tracking-wider text-sm mb-4">System Status</h3>
             <div className="flex items-center gap-2 text-green-500 font-bold">
@@ -618,17 +717,60 @@ const TeenPattiApp = () => {
             </div>
           </div>
           <div className="bg-white p-6 rounded-2xl shadow-sm border border-slate-100">
-            <h3 className="font-bold text-slate-500 uppercase tracking-wider text-sm mb-4">Active Users</h3>
-            <p className="text-3xl font-black text-slate-900">2</p>
+            <h3 className="font-bold text-slate-500 uppercase tracking-wider text-sm mb-4">Total Users</h3>
+            <p className="text-3xl font-black text-slate-900">{adminUsers.length}</p>
+          </div>
+          <div className="bg-white p-6 rounded-2xl shadow-sm border border-slate-100">
+            <h3 className="font-bold text-slate-500 uppercase tracking-wider text-sm mb-4">Total Sessions</h3>
+            <p className="text-3xl font-black text-slate-900">{adminSessions.length}</p>
           </div>
         </div>
 
-        <div className="bg-white rounded-2xl shadow-sm border border-slate-100 overflow-hidden">
-          <div className="p-6 border-b border-slate-100">
-            <h3 className="font-bold text-lg text-slate-900">Recent Sessions</h3>
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
+          {/* Recent Sessions */}
+          <div className="bg-white rounded-2xl shadow-sm border border-slate-100 overflow-hidden">
+            <div className="p-6 border-b border-slate-100">
+              <h3 className="font-bold text-lg text-slate-900">Recent Sessions</h3>
+            </div>
+            <div className="max-h-96 overflow-y-auto">
+              {adminSessions.map(session => (
+                <div key={session.id} className="p-4 border-b border-slate-50 hover:bg-slate-50 flex justify-between items-center">
+                  <div>
+                    <p className="font-bold text-slate-800">{session.name}</p>
+                    <p className="text-xs text-slate-400">{new Date(session.createdAt).toLocaleString()}</p>
+                  </div>
+                  <div className="text-right">
+                    <span className={`px-2 py-1 rounded-full text-xs font-bold ${session.isActive ? 'bg-green-100 text-green-600' : 'bg-slate-100 text-slate-500'}`}>
+                      {session.isActive ? 'Active' : 'Ended'}
+                    </span>
+                    <p className="text-xs text-slate-400 mt-1">{session._count?.hands || 0} Hands</p>
+                  </div>
+                </div>
+              ))}
+            </div>
           </div>
-          <div className="p-6 text-center text-slate-400 italic">
-            (Session history list would appear here fetching from /api/admin/sessions)
+
+          {/* Users List */}
+          <div className="bg-white rounded-2xl shadow-sm border border-slate-100 overflow-hidden">
+            <div className="p-6 border-b border-slate-100">
+              <h3 className="font-bold text-lg text-slate-900">Registered Users</h3>
+            </div>
+            <div className="max-h-96 overflow-y-auto">
+              {adminUsers.map(u => (
+                <div key={u.id} className="p-4 border-b border-slate-50 hover:bg-slate-50 flex justify-between items-center">
+                  <div className="flex items-center gap-3">
+                    <div className="w-8 h-8 bg-blue-100 text-blue-600 rounded-full flex items-center justify-center font-bold text-xs">
+                      {u.username[0].toUpperCase()}
+                    </div>
+                    <div>
+                      <p className="font-bold text-slate-800">{u.username}</p>
+                      <p className="text-xs text-slate-400">{u.role}</p>
+                    </div>
+                  </div>
+                  <p className="text-xs text-slate-400">{new Date(u.createdAt).toLocaleDateString()}</p>
+                </div>
+              ))}
+            </div>
           </div>
         </div>
       </div>
