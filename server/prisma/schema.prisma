@@ -23,6 +23,7 @@ model GameSession {
   isActive    Boolean    @default(true)
   createdAt   DateTime   @default(now())
   hands       GameHand[]
+  players     Player[]
 }
 
 model GameHand {
@@ -40,4 +41,7 @@ model Player {
   id             Int     @id @default(autoincrement())
   name           String  @unique
   sessionBalance Int     @default(0)
+  
+  sessionId      Int?
+  session        GameSession? @relation(fields: [sessionId], references: [id])
 }
