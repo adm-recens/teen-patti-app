@@ -35,6 +35,10 @@ const TeenPattiApp = () => {
   const [user, setUser] = useState(null); // { username, role }
   const [view, setView] = useState('WELCOME'); // WELCOME, SETUP, GAME, ACCESS_REQUEST, ADMIN, HELP
 
+  useEffect(() => {
+    console.log('View changed to:', view);
+  }, [view]);
+
   // Session State
   const [sessionName, setSessionName] = useState('');
   const [totalRounds, setTotalRounds] = useState(10);
@@ -168,7 +172,6 @@ const TeenPattiApp = () => {
     }
   };
 
-  // --- AUTH & SESSION HANDLERS ---
   // --- AUTH & SESSION HANDLERS ---
   const handleLogin = async (username) => {
     // For Viewer, we don't need a password (Guest access)
@@ -517,7 +520,7 @@ const TeenPattiApp = () => {
           "There would only be 3 cards but the fun with friends is unlimitedd"
         </p>
         <button
-          onClick={() => setView('LOGIN_SELECT')}
+          onClick={() => { console.log('Clicked Lets have fun'); setView('LOGIN_SELECT'); }}
           className="group relative inline-flex items-center gap-4 px-12 py-6 bg-gradient-to-r from-blue-600 to-blue-500 text-white rounded-2xl font-black text-xl shadow-2xl shadow-blue-500/40 hover:shadow-blue-500/60 hover:scale-105 transition-all duration-300"
         >
           <span>Lets have fun</span>
