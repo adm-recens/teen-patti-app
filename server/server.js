@@ -13,11 +13,12 @@ const server = http.createServer(app);
 const prisma = new PrismaClient();
 
 // ALLOW CONNECTION FROM ANYWHERE (For simplicity)
-const CLIENT_URL = process.env.CLIENT_URL || "http://localhost:5173";
+// ALLOW CONNECTION FROM ANYWHERE (For simplicity)
+const CLIENT_URL = process.env.CLIENT_URL || "https://teen-patti-client.onrender.com";
 const ALLOWED_ORIGINS = [
   CLIENT_URL,
   "https://teen-patti-client.onrender.com",
-  "http://localhost:5173"
+  "https://teen-patti-app.onrender.com"
 ];
 
 app.use(morgan('dev')); // Log requests to console

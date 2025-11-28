@@ -4,7 +4,7 @@ import { Trophy, ArrowRight, Play, User, History, Settings } from 'lucide-react'
 import { useAuth } from '../context/AuthContext';
 import DebugFooter from '../components/DebugFooter';
 
-const API_URL = import.meta.env.VITE_BACKEND_URL || 'http://localhost:3000';
+const API_URL = import.meta.env.VITE_BACKEND_URL || 'https://teen-patti-app.onrender.com';
 
 const Welcome = () => {
     const navigate = useNavigate();

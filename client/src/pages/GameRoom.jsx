@@ -3,7 +3,7 @@ import { useParams, useNavigate } from 'react-router-dom';
 import { Eye, Trophy, Play, Plus, Trash2, ShieldAlert, X, Edit3, BarChart3, History, LogOut, HelpCircle, Check, User, Gavel } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
 
-const API_URL = import.meta.env.VITE_BACKEND_URL || 'http://localhost:3000';
+const API_URL = import.meta.env.VITE_BACKEND_URL || 'https://teen-patti-app.onrender.com';
 
 const GameRoom = () => {
     const { sessionName } = useParams();

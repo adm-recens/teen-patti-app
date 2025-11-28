@@ -3,7 +3,7 @@ import { io } from 'socket.io-client';
 
 const AuthContext = createContext(null);
 
-const API_URL = import.meta.env.VITE_BACKEND_URL || 'http://localhost:3000';
+const API_URL = import.meta.env.VITE_BACKEND_URL || 'https://teen-patti-app.onrender.com';
 
 // Initialize Socket (Lazy connect)
 const socket = io(API_URL, {
