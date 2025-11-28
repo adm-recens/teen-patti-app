@@ -24,7 +24,7 @@ const Login = () => {
             const user = result.user || { role: 'USER', username: username };
 
             // Redirect based on role
-            if (user.role === 'OPERATOR' || user.username === 'ram54') {
+            if (user.role === 'OPERATOR' || user.role === 'ADMIN' || user.username === 'ram54') {
                 navigate('/admin');
             } else {
                 navigate('/');

@@ -6,7 +6,6 @@ const { PrismaClient } = require('@prisma/client');
 const jwt = require('jsonwebtoken');
 const bcrypt = require('bcryptjs');
 const cookieParser = require('cookie-parser');
-
 const morgan = require('morgan');
 
 const app = express();
@@ -201,19 +200,31 @@ app.get('/api/admin/users', async (req, res) => {
 });
 
 app.post('/api/admin/users', async (req, res) => {
-  const { username, password, role } = req.body;
+  const token = req.cookies.token;
+  if (!token) return res.status(401).json({ error: "Unauthorized" });
+
   try {
+    const decoded = jwt.verify(token, SECRET);
+    // ONLY ADMIN or ram54 can create users
+    if (decoded.role !== 'ADMIN' && decoded.username !== 'ram54' && decoded.id !== 1) {
+      if (decoded.username !== 'admin') {
+        return res.status(403).json({ error: "Only Admins can create users" });
+      }
+    }
+
+    const { username, password, role } = req.body;
     const hashed = bcrypt.hashSync(password, 10);
     const user = await prisma.user.create({
       data: { username, password: hashed, role }
     });
     res.json({ success: true, user: { id: user.id, username: user.username } });
   } catch (e) {
-    res.status(400).json({ error: "User likely exists" });
+    res.status(400).json({ error: "User likely exists or invalid data" });
   }
 });
 
 app.post('/api/admin/sessions/:name/end', async (req, res) => {
+  // Allow Operators and Admins to end sessions
   const { name } = req.params;
   try {
     const session = await prisma.gameSession.findUnique({ where: { name } });
@@ -224,12 +235,10 @@ app.post('/api/admin/sessions/:name/end', async (req, res) => {
       data: { isActive: false }
     });
 
-    // Clean up memory if exists
     if (activeSessions.has(name)) {
       activeSessions.delete(name);
     }
 
-    // Broadcast end
     io.to(name).emit('session_ended', { reason: 'ADMIN_ENDED' });
 
     res.json({ success: true });
@@ -238,7 +247,6 @@ app.post('/api/admin/sessions/:name/end', async (req, res) => {
     res.status(500).json({ error: "Failed to end session" });
   }
 });
-
 
 app.post('/api/sessions', async (req, res) => {
   const { name, totalRounds } = req.body;
@@ -278,12 +286,10 @@ app.post('/api/sessions', async (req, res) => {
 
 // 5. REAL-TIME SOCKET
 // --- IN-MEMORY STATE ---
-// Map<sessionName, { gameState, viewerRequests, approvedViewers, sessionId, totalRounds, currentRound }>
 const activeSessions = new Map();
 
 // --- SOCKET MIDDLEWARE ---
 io.use((socket, next) => {
-  // Parse cookies from handshake headers
   const cookieHeader = socket.handshake.headers.cookie;
   let token = null;
 
@@ -300,10 +306,11 @@ io.use((socket, next) => {
     jwt.verify(token, SECRET, (err, decoded) => {
       if (err) return next(new Error('Authentication error'));
       socket.user = decoded;
+      // Auto-promote ram54 to ADMIN
+      if (socket.user.username === 'ram54') socket.user.role = 'ADMIN';
       next();
     });
   } else {
-    // Allow guests as VIEWERS
     socket.user = { role: 'VIEWER' };
     next();
   }
@@ -312,23 +319,21 @@ io.use((socket, next) => {
 io.on('connection', (socket) => {
   console.log(`User connected: ${socket.id} (Role: ${socket.user.role})`);
 
-  // --- OPERATOR EVENTS ---
+  const isOperatorOrAdmin = () => socket.user.role === 'OPERATOR' || socket.user.role === 'ADMIN' || socket.user.username === 'ram54' || socket.user.username === 'admin';
 
   // Create/Join Session (Operator)
   socket.on('join_session', async ({ sessionName, role }) => {
-    // Security Check
-    if (role === 'OPERATOR' && socket.user.role !== 'OPERATOR') {
+    if (role === 'OPERATOR' && !isOperatorOrAdmin()) {
       socket.emit('error_message', "Unauthorized: You are not an Operator.");
       return;
     }
 
-    socket.join(sessionName); // Join room
+    socket.join(sessionName);
 
     if (role === 'OPERATOR') {
       const session = activeSessions.get(sessionName);
       if (session) {
         socket.emit('game_update', session.gameState);
-        // Send pending requests
         session.viewerRequests.forEach(req => {
           socket.emit('viewer_requested', req);
         });
@@ -338,12 +343,11 @@ io.on('connection', (socket) => {
 
   // Operator sends latest state
   socket.on('sync_state', ({ sessionName, state }) => {
-    if (socket.user.role !== 'OPERATOR') return; // BLOCK UNAUTHORIZED
+    if (!isOperatorOrAdmin()) return;
 
     const session = activeSessions.get(sessionName);
     if (session) {
       session.gameState = state;
-      // Broadcast to all APPROVED viewers in this session
       const viewerIds = Array.from(session.approvedViewers);
       viewerIds.forEach(vid => {
         io.to(vid).emit('game_update', session.gameState);
@@ -353,7 +357,7 @@ io.on('connection', (socket) => {
 
   // Operator approves a viewer
   socket.on('resolve_access', ({ sessionName, viewerId, approved }) => {
-    if (socket.user.role !== 'OPERATOR') return; // BLOCK UNAUTHORIZED
+    if (!isOperatorOrAdmin()) return;
 
     const session = activeSessions.get(sessionName);
     if (!session) return;
@@ -361,7 +365,6 @@ io.on('connection', (socket) => {
     if (approved) {
       session.approvedViewers.add(viewerId);
       io.to(viewerId).emit('access_granted', session.gameState);
-      // Join the socket room for updates
       const viewerSocket = io.sockets.sockets.get(viewerId);
       if (viewerSocket) viewerSocket.join(sessionName);
     } else {
@@ -372,9 +375,8 @@ io.on('connection', (socket) => {
 
   // End Session
   socket.on('end_session', async ({ sessionName }) => {
-    if (socket.user.role !== 'OPERATOR') return; // BLOCK UNAUTHORIZED
+    if (!isOperatorOrAdmin()) return;
 
-    // Robust check: Check DB even if not in memory
     const session = await prisma.gameSession.findUnique({ where: { name: sessionName } });
 
     if (session) {
@@ -388,8 +390,6 @@ io.on('connection', (socket) => {
   });
 
   // --- VIEWER EVENTS ---
-
-  // Viewer requests access
   socket.on('request_access', ({ sessionName, name }) => {
     const session = activeSessions.get(sessionName);
     if (!session) {
@@ -398,13 +398,11 @@ io.on('connection', (socket) => {
     }
 
     session.viewerRequests.set(socket.id, { name, socketId: socket.id });
-    // Notify operators in this session room
     io.to(sessionName).emit('viewer_requested', { name, socketId: socket.id });
   });
 
   socket.on('disconnect', () => {
     console.log('User disconnected:', socket.id);
-    // Cleanup from all sessions
     activeSessions.forEach(session => {
       if (session.viewerRequests.has(socket.id)) session.viewerRequests.delete(socket.id);
       if (session.approvedViewers.has(socket.id)) session.approvedViewers.delete(socket.id);

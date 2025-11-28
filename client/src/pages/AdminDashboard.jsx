@@ -7,19 +7,23 @@ const API_URL = import.meta.env.VITE_BACKEND_URL || 'http://localhost:3000';
 
 const AdminDashboard = () => {
     const navigate = useNavigate();
-    const { logout } = useAuth();
+    const { logout, user } = useAuth();
     const [adminSessions, setAdminSessions] = useState([]);
     const [adminUsers, setAdminUsers] = useState([]);
+
+    const isAdmin = user?.role === 'ADMIN' || user?.username === 'ram54' || user?.username === 'admin';
 
     useEffect(() => {
         fetch(`${API_URL}/api/admin/sessions`, { credentials: 'include' })
             .then(res => res.json())
             .then(data => setAdminSessions(data));
 
-        fetch(`${API_URL}/api/admin/users`, { credentials: 'include' })
-            .then(res => res.json())
-            .then(data => setAdminUsers(data));
-    }, []);
+        if (isAdmin) {
+            fetch(`${API_URL}/api/admin/users`, { credentials: 'include' })
+                .then(res => res.json())
+                .then(data => setAdminUsers(data));
+        }
+    }, [isAdmin]);
 
     const [newUser, setNewUser] = useState({ username: '', password: '', role: 'USER' });
     const [showCreateUser, setShowCreateUser] = useState(false);
@@ -53,10 +57,6 @@ const AdminDashboard = () => {
     const handleEndSession = async (sessionName) => {
         if (!confirm(`Are you sure you want to force end session "${sessionName}"?`)) return;
 
-        // We need to use the socket to end it properly if it's live
-        // But since this is a dashboard, we might not be connected to the socket room.
-        // Let's use a REST API for force-ending, or just emit if we are connected.
-        // For robustness, let's add a REST endpoint for admins to end sessions.
         try {
             const res = await fetch(`${API_URL}/api/admin/sessions/${sessionName}/end`, {
                 method: 'POST',
@@ -86,9 +86,11 @@ const AdminDashboard = () => {
                         <h1 className="text-3xl font-black text-slate-900">Admin Dashboard</h1>
                     </div>
                     <div className="flex gap-4">
-                        <button onClick={() => setShowCreateUser(!showCreateUser)} className="bg-blue-600 hover:bg-blue-700 text-white font-bold px-4 py-2 rounded-xl transition-colors">
-                            {showCreateUser ? 'Cancel' : 'Create User'}
-                        </button>
+                        {isAdmin && (
+                            <button onClick={() => setShowCreateUser(!showCreateUser)} className="bg-blue-600 hover:bg-blue-700 text-white font-bold px-4 py-2 rounded-xl transition-colors">
+                                {showCreateUser ? 'Cancel' : 'Create User'}
+                            </button>
+                        )}
                         <button onClick={() => { logout(); navigate('/'); }} className="text-red-500 font-bold hover:bg-red-50 px-4 py-2 rounded-xl transition-colors">Logout</button>
                     </div>
                 </div>
