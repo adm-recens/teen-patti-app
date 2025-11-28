@@ -34,6 +34,20 @@ app.use(cors({
 app.use(express.json());
 app.use(cookieParser());
 
+const io = new Server(server, {
+  cors: {
+    origin: (origin, callback) => {
+      if (!origin) return callback(null, true);
+      if (ALLOWED_ORIGINS.includes(origin) || origin.endsWith('.onrender.com')) {
+        callback(null, true);
+      } else {
+        callback(new Error('Not allowed by CORS'));
+      }
+    },
+    credentials: true
+  }
+});
+
 const SECRET = process.env.JWT_SECRET || "secret";
 
 // --- HEALTH CHECK / ROOT ROUTE ---
