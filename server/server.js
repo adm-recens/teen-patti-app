@@ -7,6 +7,8 @@ const jwt = require('jsonwebtoken');
 const bcrypt = require('bcryptjs');
 const cookieParser = require('cookie-parser');
 
+const morgan = require('morgan');
+
 const app = express();
 const server = http.createServer(app);
 const prisma = new PrismaClient();
@@ -19,6 +21,7 @@ const ALLOWED_ORIGINS = [
   "http://localhost:5173"
 ];
 
+app.use(morgan('dev')); // Log requests to console
 app.use(cors({
   origin: (origin, callback) => {
     // Allow requests with no origin (like mobile apps or curl requests)

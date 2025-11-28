@@ -36,12 +36,17 @@ export const AuthProvider = ({ children }) => {
 
     const login = async (username, password) => {
         try {
+            const controller = new AbortController();
+            const timeoutId = setTimeout(() => controller.abort(), 10000); // 10s timeout
+
             const res = await fetch(`${API_URL}/api/auth/login`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ username, password }),
-                credentials: 'include'
+                credentials: 'include',
+                signal: controller.signal
             });
+            clearTimeout(timeoutId);
             const data = await res.json();
 
             if (data.success) {
