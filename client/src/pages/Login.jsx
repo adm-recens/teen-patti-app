@@ -17,10 +17,15 @@ const Login = () => {
         setLoading(true);
 
         const result = await login(username, password);
+        console.log("Login Result:", result); // Debugging
+
         if (result.success) {
+            // Defensive check: Ensure user object exists
+            const user = result.user || { role: 'USER', username: username };
+
             // Redirect based on role
-            if (result.user.role === 'OPERATOR' || result.user.username === 'ram54') {
-                navigate('/admin'); // Or /setup
+            if (user.role === 'OPERATOR' || user.username === 'ram54') {
+                navigate('/admin');
             } else {
                 navigate('/');
             }
