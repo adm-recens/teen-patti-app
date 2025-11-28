@@ -15,10 +15,7 @@ const GameRoom = () => {
     const [accessStatus, setAccessStatus] = useState('IDLE'); // IDLE, PENDING, GRANTED, DENIED
 
     // Game State
-    const [players, setPlayers] = useState([
-        { id: 1, name: '', sessionBalance: 0 },
-        { id: 2, name: '', sessionBalance: 0 }
-    ]);
+    const [players, setPlayers] = useState([]); // Array of { id, name, sessionBalance, seat }
     const [gamePlayers, setGamePlayers] = useState([]);
     const [currentRound, setCurrentRound] = useState(1);
     const [totalRounds, setTotalRounds] = useState(10);
@@ -105,7 +102,12 @@ const GameRoom = () => {
     }, [players, currentRound, totalRounds, gamePlayers, pot, currentStake, activePlayerIndex, currentLogs, user, sessionName, socket]);
 
     const restoreState = (state) => {
-        setPlayers(state.players || []);
+        // Sort players by seat if available
+        let sortedPlayers = state.players || [];
+        if (sortedPlayers.length > 0 && sortedPlayers[0].seat) {
+            sortedPlayers.sort((a, b) => (a.seat || 99) - (b.seat || 99));
+        }
+        setPlayers(sortedPlayers);
         setCurrentRound(state.currentRound || 1);
         setTotalRounds(state.totalRounds || 10);
         setGamePlayers(state.gamePlayers || []);

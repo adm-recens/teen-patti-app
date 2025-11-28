@@ -61,12 +61,23 @@ app.get('/', (req, res) => {
 app.post('/api/auth/login', async (req, res) => {
   const { username, password } = req.body;
 
-  // Quick hack: Auto-create admin if not exists (for first run)
-  if (username === 'admin') {
-    const exists = await prisma.user.findUnique({ where: { username: 'admin' } });
-    if (!exists) {
+  // First Run: Auto-create Admin if no users exist
+  const userCount = await prisma.user.count();
+  if (userCount === 0) {
+    if (username === 'admin' && password === 'admin123') {
       const hashed = bcrypt.hashSync('admin123', 10);
-      await prisma.user.create({ data: { username: 'admin', password: hashed, role: 'OPERATOR' } });
+      const admin = await prisma.user.create({ data: { username: 'admin', password: hashed, role: 'ADMIN' } });
+      const token = jwt.sign({ id: admin.id, role: admin.role }, SECRET);
+      const isProduction = process.env.NODE_ENV === 'production';
+      res.cookie('token', token, {
+        httpOnly: true,
+        secure: isProduction,
+        sameSite: isProduction ? 'none' : 'lax',
+        maxAge: 24 * 60 * 60 * 1000
+      });
+      return res.json({ success: true, user: { username: admin.username, role: admin.role } });
+    } else {
+      return res.status(401).json({ error: 'System not initialized. Login as admin/admin123' });
     }
   }
 
@@ -76,15 +87,13 @@ app.post('/api/auth/login', async (req, res) => {
   }
 
   const token = jwt.sign({ id: user.id, role: user.role }, SECRET);
-
   const isProduction = process.env.NODE_ENV === 'production';
 
-  // Set HTTP-Only Cookie
   res.cookie('token', token, {
     httpOnly: true,
-    secure: isProduction, // True in production (HTTPS)
-    sameSite: isProduction ? 'none' : 'lax', // None for cross-site (Render)
-    maxAge: 24 * 60 * 60 * 1000 // 1 day
+    secure: isProduction,
+    sameSite: isProduction ? 'none' : 'lax',
+    maxAge: 24 * 60 * 60 * 1000
   });
 
   res.json({ success: true, user: { username: user.username, role: user.role } });
@@ -97,8 +106,11 @@ app.get('/api/auth/me', (req, res) => {
 
   jwt.verify(token, SECRET, (err, decoded) => {
     if (err) return res.json({ user: null });
-    // Refresh token if needed, or just return user
-    res.json({ user: { id: decoded.id, role: decoded.role, username: decoded.id === 1 ? 'admin' : 'User' } });
+    // Fetch fresh user data to ensure role is up to date
+    prisma.user.findUnique({ where: { id: decoded.id } }).then(user => {
+      if (!user) return res.json({ user: null });
+      res.json({ user: { id: user.id, role: user.role, username: user.username } });
+    }).catch(() => res.json({ user: null }));
   });
 });
 
@@ -205,21 +217,64 @@ app.post('/api/admin/users', async (req, res) => {
 
   try {
     const decoded = jwt.verify(token, SECRET);
-    // ONLY ADMIN or ram54 can create users
-    if (decoded.role !== 'ADMIN' && decoded.username !== 'ram54' && decoded.id !== 1) {
-      if (decoded.username !== 'admin') {
-        return res.status(403).json({ error: "Only Admins can create users" });
-      }
+    if (decoded.role !== 'ADMIN') {
+      return res.status(403).json({ error: "Only Admins can create users" });
     }
 
     const { username, password, role } = req.body;
+
+    // Validate Role
+    const validRoles = ['ADMIN', 'OPERATOR', 'PLAYER', 'GUEST'];
+    if (!validRoles.includes(role)) {
+      return res.status(400).json({ error: "Invalid role" });
+    }
+
     const hashed = bcrypt.hashSync(password, 10);
     const user = await prisma.user.create({
       data: { username, password: hashed, role }
     });
+
+    // If creating a PLAYER, also create a Player entry linked to this user
+    if (role === 'PLAYER') {
+      await prisma.player.create({
+        data: {
+          name: username, // Default player name to username
+          userId: user.id
+        }
+      });
+    }
+
     res.json({ success: true, user: { id: user.id, username: user.username } });
   } catch (e) {
+    console.error(e);
     res.status(400).json({ error: "User likely exists or invalid data" });
+  }
+});
+
+app.delete('/api/admin/users/:id', async (req, res) => {
+  const token = req.cookies.token;
+  if (!token) return res.status(401).json({ error: "Unauthorized" });
+
+  try {
+    const decoded = jwt.verify(token, SECRET);
+    if (decoded.role !== 'ADMIN') {
+      return res.status(403).json({ error: "Only Admins can delete users" });
+    }
+
+    const { id } = req.params;
+    // Prevent deleting self or super admin
+    if (parseInt(id) === decoded.id || parseInt(id) === 1) {
+      return res.status(400).json({ error: "Cannot delete yourself or Super Admin" });
+    }
+
+    // Delete associated player first if exists
+    await prisma.player.deleteMany({ where: { userId: parseInt(id) } });
+    await prisma.user.delete({ where: { id: parseInt(id) } });
+
+    res.json({ success: true });
+  } catch (e) {
+    console.error(e);
+    res.status(500).json({ error: "Failed to delete user" });
   }
 });
 
@@ -249,7 +304,7 @@ app.post('/api/admin/sessions/:name/end', async (req, res) => {
 });
 
 app.post('/api/sessions', async (req, res) => {
-  const { name, totalRounds } = req.body;
+  const { name, totalRounds, players } = req.body; // players: [{ userId, seat, name }]
 
   try {
     let session = await prisma.gameSession.findUnique({ where: { name } });
@@ -263,15 +318,47 @@ app.post('/api/sessions', async (req, res) => {
       session = await prisma.gameSession.create({
         data: { name, totalRounds, isActive: true }
       });
+
+      // Create Initial Players if provided
+      if (players && players.length > 0) {
+        for (const p of players) {
+          // Check if player entry exists for this user, else create
+          // For simplicity in this game model, we might just create a new Player entry or update existing
+          // But since Player is unique by name/user, we upsert
+          if (p.userId) {
+            await prisma.player.upsert({
+              where: { userId: p.userId },
+              update: { sessionId: session.id, seatPosition: p.seat, sessionBalance: 0 },
+              create: { name: p.name, userId: p.userId, sessionId: session.id, seatPosition: p.seat, sessionBalance: 0 }
+            });
+          }
+        }
+      }
     }
 
     // Initialize in-memory state if not present
     if (!activeSessions.has(name)) {
+      // Fetch players from DB to populate state
+      const dbPlayers = await prisma.player.findMany({ where: { sessionId: session.id } });
+      const initialPlayers = dbPlayers.map(p => ({
+        id: p.id,
+        name: p.name,
+        sessionBalance: p.sessionBalance,
+        seat: p.seatPosition
+      }));
+
       activeSessions.set(name, {
         sessionId: session.id,
         totalRounds: session.totalRounds,
         currentRound: session.currentRound,
-        gameState: null,
+        gameState: {
+          players: initialPlayers, // Pre-fill players
+          gamePlayers: [],
+          pot: 0,
+          currentStake: 20,
+          activePlayerIndex: 0,
+          currentLogs: []
+        },
         viewerRequests: new Map(),
         approvedViewers: new Set()
       });
@@ -306,12 +393,10 @@ io.use((socket, next) => {
     jwt.verify(token, SECRET, (err, decoded) => {
       if (err) return next(new Error('Authentication error'));
       socket.user = decoded;
-      // Auto-promote ram54 to ADMIN
-      if (socket.user.username === 'ram54') socket.user.role = 'ADMIN';
       next();
     });
   } else {
-    socket.user = { role: 'VIEWER' };
+    socket.user = { role: 'GUEST' };
     next();
   }
 });
@@ -319,7 +404,7 @@ io.use((socket, next) => {
 io.on('connection', (socket) => {
   console.log(`User connected: ${socket.id} (Role: ${socket.user.role})`);
 
-  const isOperatorOrAdmin = () => socket.user.role === 'OPERATOR' || socket.user.role === 'ADMIN' || socket.user.username === 'ram54' || socket.user.username === 'admin';
+  const isOperatorOrAdmin = () => socket.user.role === 'OPERATOR' || socket.user.role === 'ADMIN';
 
   // Create/Join Session (Operator)
   socket.on('join_session', async ({ sessionName, role }) => {

@@ -77,8 +77,28 @@ const AdminDashboard = () => {
         }
     };
 
+    const handleDeleteUser = async (userId) => {
+        if (!confirm("Are you sure you want to delete this user?")) return;
+        try {
+            const res = await fetch(`${API_URL}/api/admin/users/${userId}`, {
+                method: 'DELETE',
+                credentials: 'include'
+            });
+            if (res.ok) {
+                alert('User deleted');
+                setAdminUsers(adminUsers.filter(u => u.id !== userId));
+            } else {
+                const data = await res.json();
+                alert(data.error || 'Failed to delete user');
+            }
+        } catch (e) {
+            alert('Error deleting user');
+        }
+    };
+
     return (
         <div className="min-h-screen bg-slate-50 p-8">
+            {/* ... (Header and Stats remain same) ... */}
             <div className="max-w-6xl mx-auto">
                 <div className="flex items-center justify-between mb-8">
                     <div className="flex items-center gap-4">
@@ -129,8 +149,10 @@ const AdminDashboard = () => {
                                     onChange={e => setNewUser({ ...newUser, role: e.target.value })}
                                     className="border rounded-lg px-3 py-2 w-32"
                                 >
-                                    <option value="USER">User</option>
+                                    <option value="PLAYER">Player</option>
                                     <option value="OPERATOR">Operator</option>
+                                    <option value="ADMIN">Admin</option>
+                                    <option value="GUEST">Guest</option>
                                 </select>
                             </div>
                             <button type="submit" className="bg-green-600 text-white font-bold px-6 py-2 rounded-lg hover:bg-green-700">Save</button>
@@ -207,7 +229,12 @@ const AdminDashboard = () => {
                                                 <p className="text-xs text-slate-400">{u.role}</p>
                                             </div>
                                         </div>
-                                        <p className="text-xs text-slate-400">{new Date(u.createdAt).toLocaleDateString()}</p>
+                                        <div className="flex items-center gap-4">
+                                            <p className="text-xs text-slate-400">{new Date(u.createdAt).toLocaleDateString()}</p>
+                                            {u.id !== user.id && u.id !== 1 && (
+                                                <button onClick={() => handleDeleteUser(u.id)} className="text-xs text-red-400 hover:text-red-600 font-bold">Delete</button>
+                                            )}
+                                        </div>
                                     </div>
                                 ))}
                             </div>
