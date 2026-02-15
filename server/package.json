@@ -6,7 +6,7 @@
   "scripts": {
     "test": "echo \"Error: no test specified\" && exit 1",
     "dev": "nodemon server.js",
-    "start": "npx prisma migrate deploy && node server.js",
+    "start": "npm install && npx prisma migrate deploy && node server.js",
     "db:push": "npx prisma db push",
     "db:push:sqlite": "npx prisma db push --schema=prisma/schema.sqlite.prisma",
     "db:migrate": "npx prisma migrate dev",
