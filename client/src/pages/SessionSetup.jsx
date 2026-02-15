@@ -17,8 +17,8 @@ const SessionSetup = () => {
 
     const addPlayer = () => {
         if (!newPlayerName.trim()) return;
-        if (players.length >= 8) {
-            setError('Maximum 8 players allowed');
+        if (players.length >= 17) {
+            setError('Maximum 17 players allowed');
             return;
         }
         
@@ -90,7 +90,10 @@ const SessionSetup = () => {
     const getPlayerColor = (index) => {
         const colors = [
             'bg-red-500', 'bg-blue-500', 'bg-green-500', 'bg-yellow-500',
-            'bg-purple-500', 'bg-pink-500', 'bg-indigo-500', 'bg-orange-500'
+            'bg-purple-500', 'bg-pink-500', 'bg-indigo-500', 'bg-orange-500',
+            'bg-teal-500', 'bg-cyan-500', 'bg-lime-500', 'bg-emerald-500',
+            'bg-violet-500', 'bg-fuchsia-500', 'bg-rose-500', 'bg-amber-500',
+            'bg-sky-500'
         ];
         return colors[index % colors.length];
     };
@@ -197,11 +200,11 @@ const SessionSetup = () => {
                                 <span className={`text-sm font-bold px-3 py-1 rounded-full ${
                                     players.length < 2 
                                         ? 'bg-red-100 text-red-600' 
-                                        : players.length >= 8 
+                                        : players.length >= 17 
                                             ? 'bg-yellow-100 text-yellow-600'
                                             : 'bg-green-100 text-green-600'
                                 }`}>
-                                    {players.length} / 8
+                                    {players.length} / 17
                                 </span>
                             </div>
 
@@ -214,7 +217,7 @@ const SessionSetup = () => {
                                         onKeyPress={(e) => e.key === 'Enter' && addPlayer()}
                                         className="w-full bg-slate-50 border-2 border-slate-200 rounded-xl px-4 py-3 font-bold text-slate-900 focus:border-blue-500 outline-none transition-all"
                                         placeholder="Enter player name..."
-                                        disabled={players.length >= 8}
+                                        disabled={players.length >= 17}
                                     />
                                 </div>
                                 <button

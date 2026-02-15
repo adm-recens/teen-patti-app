@@ -29,7 +29,7 @@ const Welcome = () => {
             icon: '♠',
             color: 'from-purple-600 to-pink-600',
             status: 'available',
-            players: '2-8 players',
+            players: '2-17 players',
             duration: '15-30 min'
         },
         {
