@@ -10,7 +10,7 @@
     "build": "cd client && npm run build",
     "start": "cd server && npm start",
     "postinstall": "npm install --prefix server && npm install --prefix client",
-    "render-build": "npm install && cd server && npm install && cd ../client && npm install && npx vite build"
+    "render-build": "npm install && (cd client && npm install && npm run build)"
   },
   "engines": {
     "node": ">=18.0.0"
