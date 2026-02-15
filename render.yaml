@@ -27,6 +27,8 @@ services:
         value: production
       - key: PORT
         value: 10000
+      - key: CLIENT_URL
+        value: https://funny-friends.onrender.com
       - key: DATABASE_URL
         fromService:
           name: funny-friends-db

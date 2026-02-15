@@ -9,7 +9,7 @@
     "client": "cd client && npm run dev",
     "build": "cd client && npm run build",
     "start": "cd server && npm start",
-    "render-build": "cd client && NODE_ENV=development npm install && npm run build"
+    "render-build": "cd client && npm ci && npm run build"
   },
   "engines": {
     "node": ">=18.0.0"

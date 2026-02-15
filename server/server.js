@@ -31,7 +31,7 @@ const ALLOWED_ORIGINS = [
   "http://127.0.0.1:5174"
 ];
 
-app.use(morgan('dev')); // Log requests to console
+app.use(morgan(process.env.NODE_ENV === 'production' ? 'combined' : 'dev')); // Log requests to console
 app.use(cors({
   origin: (origin, callback) => {
     // Allow requests with no origin (like mobile apps or curl requests)
@@ -47,13 +47,15 @@ app.use(cors({
 app.use(express.json());
 app.use(cookieParser());
 
-// DEBUG MIDDLEWARE
-app.use((req, res, next) => {
-  console.log(`[${new Date().toISOString()}] ${req.method} ${req.url}`);
-  console.log("Cookies:", req.cookies);
-  console.log("Origin:", req.headers.origin);
-  next();
-});
+// DEBUG MIDDLEWARE (only in development)
+if (process.env.NODE_ENV !== 'production') {
+  app.use((req, res, next) => {
+    console.log(`[${new Date().toISOString()}] ${req.method} ${req.url}`);
+    console.log("Cookies:", req.cookies);
+    console.log("Origin:", req.headers.origin);
+    next();
+  });
+}
 
 const io = new Server(server, {
   cors: {
@@ -69,7 +71,11 @@ const io = new Server(server, {
   }
 });
 
-const SECRET = process.env.JWT_SECRET || "secret";
+const SECRET = process.env.JWT_SECRET;
+if (!SECRET && process.env.NODE_ENV === 'production') {
+  console.error('FATAL: JWT_SECRET environment variable is required in production');
+  process.exit(1);
+}
 
 // --- HEALTH CHECK / ROOT ROUTE ---
 app.get('/', (req, res) => {
@@ -722,6 +728,11 @@ io.on('connection', (socket) => {
   });
 });
 
+// API 404 handler - must be before static files
+app.use('/api/*', (req, res) => {
+  res.status(404).json({ error: 'API endpoint not found' });
+});
+
 // Serve static files in production
 if (process.env.NODE_ENV === 'production') {
   const path = require('path');
@@ -731,6 +742,12 @@ if (process.env.NODE_ENV === 'production') {
     res.sendFile(path.join(__dirname, '../client/dist/index.html'));
   });
 }
+
+// Global error handling middleware
+app.use((err, req, res, next) => {
+  console.error('Global error:', err);
+  res.status(500).json({ error: 'Internal server error' });
+});
 
 const PORT = process.env.PORT || 3000;
 server.listen(PORT, () => {
