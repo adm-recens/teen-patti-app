@@ -404,15 +404,10 @@ const AdminDashboard = () => {
                     {/* Users Section */}
                     <div className="bg-white rounded-2xl shadow-sm border border-slate-200 overflow-hidden">
                         <div className="p-6 border-b border-slate-100">
-                                    <div className="flex items-center gap-3">
-                                <div className="w-10 h-10 bg-gradient-to-br from-purple-600 to-pink-600 rounded-xl flex items-center justify-center">
-                                    <Heart className="text-white" size={20} />
+                            <div className="flex items-center gap-3">
+                                <div className="w-10 h-10 bg-purple-100 rounded-xl flex items-center justify-center">
+                                    <Users size={20} className="text-purple-600" />
                                 </div>
-                                <div>
-                                    <h1 className="text-xl font-black text-slate-900">Funny Friends Admin</h1>
-                                    <p className="text-sm text-slate-500">System Administration Panel</p>
-                                </div>
-                            </div>
                                 <h2 className="text-lg font-bold text-slate-900">Registered Users</h2>
                             </div>
                         </div>
