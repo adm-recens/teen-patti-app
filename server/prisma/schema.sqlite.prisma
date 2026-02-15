@@ -3,7 +3,7 @@ generator client {
 }
 
 datasource db {
-  provider = "postgresql"
+  provider = "sqlite"
   url      = env("DATABASE_URL")
 }
 
@@ -11,7 +11,7 @@ model User {
   id        Int      @id @default(autoincrement())
   username  String   @unique
   password  String   
-  role      String   @default("GUEST") // 'ADMIN', 'OPERATOR', 'PLAYER', 'GUEST'
+  role      String   @default("GUEST")
   createdAt DateTime @default(now())
   player    Player?
 }
@@ -31,24 +31,24 @@ model GameHand {
   id        Int      @id @default(autoincrement())
   winner    String
   potSize   Int
-  logs      Json     // PostgreSQL supports JSON natively
+  logs      String   // SQLite doesn't support Json, use String
   createdAt DateTime @default(now())
   
   sessionId Int?
-  session   GameSession? @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+  session   GameSession? @relation(fields: [sessionId], references: [id])
 }
 
 model Player {
   id             Int     @id @default(autoincrement())
   name           String
   sessionBalance Int     @default(0)
-  seatPosition   Int?    // 1-based index for seating
+  seatPosition   Int?
   
   userId         Int?    @unique
   user           User?   @relation(fields: [userId], references: [id])
   
   sessionId      Int?
-  session        GameSession? @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+  session        GameSession? @relation(fields: [sessionId], references: [id])
   
-  @@unique([name, sessionId])  // Player names must be unique within a session
+  @@unique([name, sessionId])
 }

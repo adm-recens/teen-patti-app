@@ -70,52 +70,67 @@ This will start:
 - Username: `admin`
 - Password: `admin123`
 
+## Database Options
+
+Funny Friends supports both **SQLite** (local development) and **PostgreSQL** (production/Render).
+
+- **SQLite**: File-based, perfect for local development
+- **PostgreSQL**: Production-grade, required for Render free tier (no disk support)
+
+See [POSTGRESQL_SETUP.md](POSTGRESQL_SETUP.md) for detailed database setup instructions.
+
 ## Deployment on Render
 
-### Method 1: Using Render Dashboard (Blueprint)
+### Method 1: Using Render Dashboard (Blueprint) - RECOMMENDED
 
-1. Fork this repository to your GitHub account
+The easiest way - automatically creates PostgreSQL database:
 
-2. Create a new Web Service on Render:
+1. **Push your code to GitHub**
+
+2. **Connect to Render**:
    - Go to https://dashboard.render.com/
    - Click "New +" → "Blueprint"
    - Connect your GitHub repository
-   - Render will automatically detect the `render.yaml` file
+   - Render will automatically:
+     - Create a PostgreSQL database (free tier)
+     - Create a Web Service
+     - Set all environment variables
+     - Run migrations
 
-3. Deploy!
-   - Render will build and deploy your application
+3. **Deploy!**
+   - Click "Apply"
+   - Wait for build and deployment
    - Your app will be available at `https://your-service-name.onrender.com`
 
 ### Method 2: Manual Setup
 
-1. **Create Web Service**:
+If you prefer manual configuration:
+
+1. **Create PostgreSQL Database**:
    - Go to https://dashboard.render.com/
+   - Click "New +" → "PostgreSQL"
+   - Name: `funny-friends-db`
+   - Select **Free** plan
+   - Create Database
+
+2. **Create Web Service**:
    - Click "New +" → "Web Service"
    - Connect your GitHub repository
-
-2. **Configure Service**:
-   - **Name**: `funny-friends` (or your preferred name)
+   - **Name**: `funny-friends`
    - **Environment**: `Node`
    - **Build Command**: `npm run render-build`
    - **Start Command**: `npm start`
 
 3. **Set Environment Variables**:
-   Add these environment variables in the Render dashboard:
    ```
    NODE_ENV=production
    JWT_SECRET=<generate-a-strong-secret>
-   DATABASE_URL=file:./prisma/dev.db
+   DATABASE_URL=<copy-from-postgresql-service>
    ```
 
-4. **Add Disk** (for SQLite persistence):
-   - Click "Disks" in your service
-   - **Name**: `sqlite-data`
-   - **Mount Path**: `/opt/render/project/src/server/prisma`
-   - **Size**: 1 GB
-
-5. **Deploy**:
+4. **Deploy!**
    - Click "Create Web Service"
-   - Render will build and deploy your application
+   - Render will build and deploy
 
 ## Environment Variables
 

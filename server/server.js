@@ -515,12 +515,13 @@ app.post('/api/sessions', async (req, res) => {
         try {
           const session = await prisma.gameSession.findUnique({ where: { name } });
           if (session) {
-            // Save hand history
+            // Save hand history - handle both SQLite (String) and PostgreSQL (Json)
+            const logsData = process.env.DATABASE_URL?.includes('sqlite') ? JSON.stringify([]) : [];
             await prisma.gameHand.create({
               data: {
                 winner: summary.winner.name,
                 potSize: summary.pot,
-                logs: JSON.stringify([]),
+                logs: logsData,
                 sessionId: session.id
               }
             });

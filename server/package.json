@@ -8,9 +8,12 @@
     "dev": "nodemon server.js",
     "start": "npx prisma migrate deploy && node server.js",
     "db:push": "npx prisma db push",
+    "db:push:sqlite": "npx prisma db push --schema=prisma/schema.sqlite.prisma",
     "db:migrate": "npx prisma migrate dev",
     "db:studio": "npx prisma studio",
-    "db:seed": "node scripts/seed.js"
+    "db:seed": "node scripts/seed.js",
+    "db:generate": "npx prisma generate",
+    "db:generate:sqlite": "npx prisma generate --schema=prisma/schema.sqlite.prisma"
   },
   "keywords": [],
   "author": "",

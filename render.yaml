@@ -1,4 +1,22 @@
 services:
+  # PostgreSQL Database (Free Tier)
+  - type: pserv
+    name: funny-friends-db
+    runtime: docker
+    image: postgres:15-alpine
+    envVars:
+      - key: POSTGRES_USER
+        value: funnyfriends
+      - key: POSTGRES_PASSWORD
+        generateValue: true
+      - key: POSTGRES_DB
+        value: funnyfriends
+    disk:
+      name: postgres-data
+      mountPath: /var/lib/postgresql/data
+      sizeGB: 1
+
+  # Web Service (Node.js Backend + Frontend)
   - type: web
     name: funny-friends
     runtime: node
@@ -10,10 +28,12 @@ services:
       - key: PORT
         value: 10000
       - key: DATABASE_URL
-        value: file:./prisma/dev.db
+        fromService:
+          name: funny-friends-db
+          type: pserv
+          property: connectionString
       - key: JWT_SECRET
         generateValue: true
-    disk:
-      name: sqlite-data
-      mountPath: /opt/render/project/src/server/prisma
-      sizeGB: 1
+    dependsOn:
+      - type: pserv
+        name: funny-friends-db
