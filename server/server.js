@@ -6,6 +6,8 @@ const http = require('http');
 const { Server } = require('socket.io');
 const cors = require('cors');
 const { PrismaClient } = require('@prisma/client');
+const { PrismaPg } = require('@prisma/adapter-pg');
+const { Pool } = require('pg');
 const jwt = require('jsonwebtoken');
 const bcrypt = require('bcryptjs');
 const cookieParser = require('cookie-parser');
@@ -14,7 +16,11 @@ const GameManager = require('./game/GameManager');
 
 const app = express();
 const server = http.createServer(app);
-const prisma = new PrismaClient();
+
+// Setup Prisma with PostgreSQL adapter for v7
+const pool = new Pool({ connectionString: process.env.DATABASE_URL });
+const adapter = new PrismaPg(pool);
+const prisma = new PrismaClient({ adapter });
 
 // ALLOW CONNECTION FROM ANYWHERE (For simplicity)
 // ALLOW CONNECTION FROM ANYWHERE (For simplicity)
