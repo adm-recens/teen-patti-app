@@ -11,6 +11,7 @@ import GameRoom from './pages/GameRoom';
 import AdminDashboard from './pages/AdminDashboard';
 import OperatorDashboard from './pages/OperatorDashboard';
 import Viewer from './pages/Viewer';
+import Rummy from './pages/Rummy';
 
 // Protected Route Component
 const ProtectedRoute = ({ children, requireOperator = false, requireAdmin = false }) => {
@@ -40,6 +41,7 @@ const AppRoutes = () => {
       <Route path="/login" element={<Login />} />
       <Route path="/logout" element={<Logout />} />
       <Route path="/viewer/:sessionName" element={<Viewer />} />
+      <Route path="/rummy" element={<Rummy />} />
 
       {/* Protected Routes - Any logged in user */}
       <Route
