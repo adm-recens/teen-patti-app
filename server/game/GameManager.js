@@ -398,11 +398,16 @@ class GameManager extends EventEmitter {
             // Clear the request
             this.gameState.showRequest = null;
             
+            // Find requester index before checking remaining
+            const requesterIndex = this.gameState.gamePlayers.findIndex(p => p.id === requester.id);
+            
             // Check if only one player remains
             const remaining = this.gameState.gamePlayers.filter(p => !p.folded);
             if (remaining.length === 1) {
                 this.endHand(remaining[0]);
             } else {
+                // Turn passes to next player after requester
+                this.gameState.activePlayerIndex = this.getNextActiveIndex(requesterIndex);
                 this.emit('state_change', this.getPublicState());
             }
         } else {
