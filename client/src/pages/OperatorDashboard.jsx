@@ -2,8 +2,7 @@ import React, { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Plus, LogOut, Trophy, Users, Clock, Eye, Trash2, ChevronRight, X, ArrowLeft, Gamepad2, Activity, CheckCircle, AlertCircle } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
-
-const API_URL = import.meta.env.VITE_BACKEND_URL || 'https://teen-patti-app.onrender.com';
+import { API_URL } from '../config';
 
 const OperatorDashboard = () => {
     const navigate = useNavigate();

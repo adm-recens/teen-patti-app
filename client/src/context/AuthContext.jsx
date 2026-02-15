@@ -1,15 +1,11 @@
 import React, { createContext, useContext, useState, useEffect } from 'react';
 import { io } from 'socket.io-client';
+import { API_URL, SOCKET_CONFIG } from '../config';
 
 const AuthContext = createContext(null);
 
-const API_URL = import.meta.env.VITE_BACKEND_URL || 'https://teen-patti-app.onrender.com';
-
 // Initialize Socket (Lazy connect)
-const socket = io(API_URL, {
-    autoConnect: false,
-    withCredentials: true
-});
+const socket = io(API_URL, SOCKET_CONFIG);
 
 // Debug listeners (will be attached once socket is used)
 socket.on('connect', () => {

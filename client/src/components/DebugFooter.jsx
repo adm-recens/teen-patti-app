@@ -1,6 +1,5 @@
 import React, { useEffect, useState } from 'react';
-
-const API_URL = import.meta.env.VITE_BACKEND_URL || 'https://teen-patti-app.onrender.com';
+import { API_URL } from '../config';
 
 const DebugFooter = () => {
     const [status, setStatus] = useState('Checking...');

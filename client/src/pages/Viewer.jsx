@@ -2,8 +2,7 @@ import React, { useEffect, useState, useRef } from 'react';
 import { useParams, useLocation, useNavigate } from 'react-router-dom';
 import { LogOut, Users, Trophy, Activity, ChevronLeft } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
-
-const API_URL = import.meta.env.VITE_BACKEND_URL || 'https://teen-patti-app.onrender.com';
+import { API_URL } from '../config';
 
 const Viewer = () => {
     const { sessionName } = useParams();

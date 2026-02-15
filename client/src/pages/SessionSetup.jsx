@@ -2,8 +2,7 @@ import React, { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { ArrowLeft, UserPlus, Users, Trash2, Play, Settings, AlertCircle, CheckCircle2, Crown } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
-
-const API_URL = import.meta.env.VITE_BACKEND_URL || 'https://teen-patti-app.onrender.com';
+import { API_URL } from '../config';
 
 const SessionSetup = () => {
     const navigate = useNavigate();

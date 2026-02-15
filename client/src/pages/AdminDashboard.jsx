@@ -2,8 +2,7 @@ import React, { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { ArrowLeft, Users, Gamepad2, Plus, Trash2, Eye, X, Heart, Activity, BarChart3, UserPlus, CheckCircle, AlertCircle, Clock } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
-
-const API_URL = import.meta.env.VITE_BACKEND_URL || 'https://teen-patti-app.onrender.com';
+import { API_URL } from '../config';
 
 const AdminDashboard = () => {
     const navigate = useNavigate();

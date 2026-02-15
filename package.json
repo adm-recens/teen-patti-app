@@ -1,0 +1,30 @@
+{
+  "name": "funny-friends",
+  "version": "2.0.0",
+  "description": "Funny Friends - A platform where friends gather to play card games",
+  "main": "server/server.js",
+  "scripts": {
+    "dev": "concurrently \"npm run server\" \"npm run client\"",
+    "server": "cd server && npm run dev",
+    "client": "cd client && npm run dev",
+    "build": "cd client && npm run build",
+    "start": "cd server && npm start",
+    "postinstall": "npm install --prefix server && npm install --prefix client",
+    "render-build": "npm install && cd client && npm install && npm run build"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  },
+  "keywords": [
+    "games",
+    "teen-patti",
+    "cards",
+    "multiplayer",
+    "friends"
+  ],
+  "author": "",
+  "license": "MIT",
+  "devDependencies": {
+    "concurrently": "^8.2.0"
+  }
+}
