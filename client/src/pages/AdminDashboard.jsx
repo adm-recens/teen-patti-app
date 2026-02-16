@@ -27,13 +27,11 @@ const AdminDashboard = () => {
 
     const fetchData = async () => {
         setLoading(true);
-        const token = localStorage.getItem('token');
-        const headers = token ? { 'Authorization': `Bearer ${token}` } : {};
 
         try {
             const [sessionsRes, usersRes] = await Promise.all([
-                fetch(`${API_URL}/api/admin/sessions`, { credentials: 'include', headers }),
-                fetch(`${API_URL}/api/admin/users`, { credentials: 'include', headers })
+                fetch(`${API_URL}/api/admin/sessions`, { credentials: 'include' }),
+                fetch(`${API_URL}/api/admin/users`, { credentials: 'include' })
             ]);
 
             if (sessionsRes.ok) {
@@ -62,16 +60,10 @@ const AdminDashboard = () => {
             return;
         }
 
-        const token = localStorage.getItem('token');
-        const headers = {
-            'Content-Type': 'application/json',
-            ...(token ? { 'Authorization': `Bearer ${token}` } : {})
-        };
-
         try {
             const res = await fetch(`${API_URL}/api/admin/users`, {
                 method: 'POST',
-                headers,
+                headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify(newUser),
                 credentials: 'include'
             });
@@ -96,14 +88,10 @@ const AdminDashboard = () => {
     const handleDeleteUser = async (userId) => {
         if (!confirm('Are you sure you want to delete this user?')) return;
 
-        const token = localStorage.getItem('token');
-        const headers = token ? { 'Authorization': `Bearer ${token}` } : {};
-
         try {
             const res = await fetch(`${API_URL}/api/admin/users/${userId}`, {
                 method: 'DELETE',
-                credentials: 'include',
-                headers
+                credentials: 'include'
             });
 
             if (res.ok) {
@@ -119,14 +107,10 @@ const AdminDashboard = () => {
     const handleEndSession = async (sessionName) => {
         if (!confirm(`End session "${sessionName}"?`)) return;
 
-        const token = localStorage.getItem('token');
-        const headers = token ? { 'Authorization': `Bearer ${token}` } : {};
-
         try {
             const res = await fetch(`${API_URL}/api/admin/sessions/${sessionName}/end`, {
                 method: 'POST',
-                credentials: 'include',
-                headers
+                credentials: 'include'
             });
 
             if (res.ok) {
@@ -142,14 +126,10 @@ const AdminDashboard = () => {
     const handleDeleteSession = async (sessionName) => {
         if (!confirm(`Permanently delete "${sessionName}"? This cannot be undone.`)) return;
 
-        const token = localStorage.getItem('token');
-        const headers = token ? { 'Authorization': `Bearer ${token}` } : {};
-
         try {
             const res = await fetch(`${API_URL}/api/admin/sessions/${sessionName}`, {
                 method: 'DELETE',
-                credentials: 'include',
-                headers
+                credentials: 'include'
             });
 
             if (res.ok) {
@@ -163,13 +143,9 @@ const AdminDashboard = () => {
     };
 
     const handleViewSession = async (sessionName) => {
-        const token = localStorage.getItem('token');
-        const headers = token ? { 'Authorization': `Bearer ${token}` } : {};
-
         try {
             const res = await fetch(`${API_URL}/api/admin/sessions/${sessionName}`, {
-                credentials: 'include',
-                headers
+                credentials: 'include'
             });
 
             if (res.ok) {

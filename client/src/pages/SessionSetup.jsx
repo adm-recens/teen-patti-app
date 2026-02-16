@@ -54,16 +54,11 @@ const SessionSetup = () => {
         }
 
         setCreating(true);
-        const token = localStorage.getItem('token');
-        const headers = {
-            'Content-Type': 'application/json',
-            ...(token ? { 'Authorization': `Bearer ${token}` } : {})
-        };
 
         try {
             const res = await fetch(`${API_URL}/api/sessions`, {
                 method: 'POST',
-                headers,
+                headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ 
                     name: sessionName, 
                     totalRounds: parseInt(totalRounds), 

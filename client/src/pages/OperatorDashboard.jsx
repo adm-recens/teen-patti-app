@@ -25,13 +25,10 @@ const OperatorDashboard = () => {
 
     const fetchSessions = async () => {
         setLoading(true);
-        const token = localStorage.getItem('token');
-        const headers = token ? { 'Authorization': `Bearer ${token}` } : {};
 
         try {
             const res = await fetch(`${API_URL}/api/admin/sessions`, { 
-                credentials: 'include', 
-                headers 
+                credentials: 'include'
             });
             
             if (res.ok) {
@@ -49,13 +46,9 @@ const OperatorDashboard = () => {
     };
 
     const handleViewSession = async (sessionName) => {
-        const token = localStorage.getItem('token');
-        const headers = token ? { 'Authorization': `Bearer ${token}` } : {};
-
         try {
             const res = await fetch(`${API_URL}/api/admin/sessions/${sessionName}`, {
-                credentials: 'include',
-                headers
+                credentials: 'include'
             });
             if (res.ok) {
                 const data = await res.json();
@@ -74,14 +67,10 @@ const OperatorDashboard = () => {
     const handleEndSession = async (sessionName) => {
         if (!confirm(`Are you sure you want to end session "${sessionName}"?`)) return;
 
-        const token = localStorage.getItem('token');
-        const headers = token ? { 'Authorization': `Bearer ${token}` } : {};
-
         try {
             const res = await fetch(`${API_URL}/api/admin/sessions/${sessionName}/end`, {
                 method: 'POST',
-                credentials: 'include',
-                headers
+                credentials: 'include'
             });
             if (res.ok) {
                 alert('Session ended');
