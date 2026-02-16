@@ -20,6 +20,9 @@ const GameManager = require('./game/GameManager');
 const app = express();
 const server = http.createServer(app);
 
+// Trust proxy for rate limiting (required when behind Render's load balancer)
+app.set('trust proxy', 1);
+
 // Setup Prisma with PostgreSQL adapter for v7
 const pool = new Pool({ connectionString: process.env.DATABASE_URL });
 const adapter = new PrismaPg(pool);
@@ -167,6 +170,20 @@ const getUserFromRequest = (req) => {
   }
 };
 
+// Check if setup is needed
+app.get('/api/setup/status', async (req, res) => {
+  try {
+    const userCount = await prisma.user.count();
+    res.json({ 
+      needsSetup: userCount === 0,
+      userCount: userCount 
+    });
+  } catch (error) {
+    console.error('Error checking setup status:', error);
+    res.status(500).json({ error: 'Failed to check setup status' });
+  }
+});
+
 // Authorization middleware
 const requireAuth = (req, res, next) => {
   const user = getUserFromRequest(req);
@@ -238,6 +255,16 @@ app.post('/api/auth/setup', authLimiter, async (req, res) => {
 // 2. LOGIN API
 app.post('/api/auth/login', authLimiter, async (req, res) => {
   try {
+    // Check if setup is needed first
+    const userCount = await prisma.user.count();
+    if (userCount === 0) {
+      return res.status(400).json({ 
+        error: 'System not initialized', 
+        needsSetup: true,
+        message: 'Please complete system setup first' 
+      });
+    }
+
     const { username, password } = loginSchema.parse(req.body);
 
     const user = await prisma.user.findUnique({ where: { username } });
