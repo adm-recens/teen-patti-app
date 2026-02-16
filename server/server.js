@@ -735,7 +735,7 @@ io.on('connection', (socket) => {
 });
 
 // API 404 handler - must be before static files
-app.use('/api/*', (req, res) => {
+app.use('/api/{*path}', (req, res) => {
   res.status(404).json({ error: 'API endpoint not found' });
 });
 
