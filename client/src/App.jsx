@@ -39,7 +39,7 @@ const SetupCheck = ({ children }) => {
   if (loading) return <div>Loading...</div>;
 
   if (needsSetup) {
-    return <Navigate to="/setup" replace />;
+    return <Navigate to="/system-setup" replace />;
   }
 
   return children;
@@ -69,7 +69,7 @@ const ProtectedRoute = ({ children, requireOperator = false, requireAdmin = fals
 const AppRoutes = () => {
   return (
     <Routes>
-      <Route path="/setup" element={<Setup />} />
+      <Route path="/system-setup" element={<Setup />} />
       <Route path="/" element={
         <SetupCheck>
           <Welcome />
