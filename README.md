@@ -1,14 +1,36 @@
 # Funny Friends
 
-A platform where friends gather to play card games together. Currently featuring Teen Patti, with more games coming soon!
+A secure, multiplayer platform where friends gather to play card games together. Currently featuring Teen Patti, with more games coming soon!
+
+[![Security Rating](https://img.shields.io/badge/security-A+-brightgreen)](SECURITY_AUDIT.md)
+[![License](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+
+## Security First
+
+This application has undergone comprehensive security hardening. See our [Security Audit Report](SECURITY_AUDIT.md) for details.
+
+**Key Security Features:**
+- 🔒 HTTP-only cookies for secure session management
+- 🛡️ Helmet.js security headers
+- 🚫 Rate limiting on authentication endpoints
+- ✅ Input validation with Zod schemas
+- 🔐 Role-based access control (RBAC)
+- 📝 Comprehensive audit trail
 
 ## Features
 
 - **Teen Patti**: The classic Indian card game with full betting mechanics
-- **Multiplayer**: Support for 2-17 players per game
+- **Multiplayer**: Support for 2-6 players per game
 - **Real-time**: Live game updates via WebSocket
-- **Role-based Access**: Admin, Operator, and Viewer roles
-- **Secure**: JWT authentication and session management
+- **Role-based Access**: Admin, Operator, Player, and Viewer roles
+- **Secure**: Production-grade security with JWT authentication
+- **Responsive**: Works on desktop and mobile devices
+
+## Quick Links
+
+- 📖 [Local Development Guide](LOCAL_DEVELOPMENT.md) - Get started in 5 minutes
+- 🚀 [Production Deployment Guide](PRODUCTION_DEPLOYMENT.md) - Deploy to Render
+- 🔐 [Security Audit Report](SECURITY_AUDIT.md) - Security details
 
 ## Architecture
 
@@ -34,47 +56,78 @@ funny-friends/
 **Development Mode:**
 - Frontend runs on `http://localhost:5173` (Vite dev server)
 - Backend runs on `http://localhost:3000` (Express server)
-- They communicate via API calls and WebSocket
+- SQLite database for easy local development
 
 **Production Mode (Render):**
-1. Frontend is **built** into static files (`client/dist/`)
-2. Express server **serves** these static files
-3. Both frontend and backend run on **same domain** (no CORS issues)
-4. WebSocket connections work through the same server
-
-This is why we only need **one Web Service** on Render, not two!
+- Single Express server serves both API and static files
+- PostgreSQL database for production reliability
+- All traffic over HTTPS with security headers
 
 ## Tech Stack
 
 - **Frontend**: React 19 + Vite + Tailwind CSS
-- **Backend**: Express.js + Socket.io
-- **Database**: SQLite (local) / PostgreSQL (Render)
+- **Backend**: Express.js 5 + Socket.io
+- **Database**: SQLite (local) / PostgreSQL (production)
+- **ORM**: Prisma with PostgreSQL driver adapter
 - **Real-time**: Socket.io for live game updates
-- **Build Tool**: Vite (creates optimized static files)
+- **Security**: Helmet.js, express-rate-limit, bcrypt, JWT
+- **Validation**: Zod for input validation
 
-## Local Development
+## Quick Start
 
 ### Prerequisites
 
 - Node.js 18+
-- npm or yarn
+- npm 9+
 
-### Quick Start
+### 1. Clone and Install
 
 ```bash
-# 1. Clone the repository
-git clone https://github.com/yourusername/funny-friends.git
-cd funny-friends
+git clone https://github.com/adm-recens/teen-patti-app.git
+cd teen-patti-app
+npm run install-all
+```
 
-# 2. Install dependencies (installs both client & server)
-npm install
+### 2. Configure Environment
 
-# 3. Setup environment
-cd server && cp .env.example .env
-cd ../client && cp .env.example .env.local
-cd ..
+```bash
+# Server environment
+cd server
+cp .env.example .env
+# Edit .env with your settings (see below)
 
-# 4. Start development (runs both frontend & backend)
+# Client environment
+cd ../client
+cp .env.example .env.local
+```
+
+**Minimum server/.env configuration:**
+```env
+DATABASE_URL="file:./dev.db"
+JWT_SECRET="your-secret-min-32-characters-long"
+ADMIN_SETUP_KEY="your-setup-key-min-10-characters"
+CLIENT_URL="http://localhost:5173"
+PORT=3000
+NODE_ENV=development
+```
+
+**Generate secure keys:**
+```bash
+node -e "console.log(require('crypto').randomBytes(64).toString('hex'))"  # JWT_SECRET
+node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"  # ADMIN_SETUP_KEY
+```
+
+### 3. Initialize Database
+
+```bash
+cd server
+npx prisma generate
+npx prisma db push
+```
+
+### 4. Start Development
+
+```bash
 npm run dev
 ```
 
@@ -82,218 +135,82 @@ npm run dev
 - Frontend: http://localhost:5173
 - Backend API: http://localhost:3000
 
-### Default Admin Credentials
+### 5. First-Time Setup
 
-- Username: `admin`
-- Password: `admin123`
+1. Open http://localhost:5173
+2. You'll see the setup page (only appears when no users exist)
+3. Enter your `ADMIN_SETUP_KEY` from `.env`
+4. Create the first admin account
+5. Login with your new credentials
 
-## Database Options
+## Deployment
 
-Funny Friends supports both **SQLite** (local development) and **PostgreSQL** (production/Render).
+### Render (Recommended)
 
-- **SQLite**: File-based, perfect for local development
-- **PostgreSQL**: Production-grade, required for Render free tier
+The easiest way to deploy:
 
-See [POSTGRESQL_SETUP.md](POSTGRESQL_SETUP.md) for detailed database setup instructions.
-
-## Deployment on Render
-
-### Understanding the Architecture
-
-On Render, you only need **ONE Web Service** (not two!). Here's why:
-
-```
-┌─────────────────────────────────────┐
-│         Render Web Service          │
-│  ┌─────────────────────────────┐   │
-│  │   Express Server (Node.js)  │   │
-│  │   - API endpoints           │   │
-│  │   - WebSocket server        │   │
-│  │   - Serves static files     │   │
-│  └─────────────────────────────┘   │
-│              ▲                      │
-│              │                      │
-│  ┌─────────────────────────────┐   │
-│  │   Static Files (client/dist)│   │
-│  │   - index.html              │   │
-│  │   - JS/CSS bundles          │   │
-│  └─────────────────────────────┘   │
-└─────────────────────────────────────┘
-```
-
-**The Process:**
-1. **Build Step**: Vite builds React app into `client/dist/` (static files)
-2. **Runtime**: Express serves these static files + handles API + WebSocket
-3. **Result**: Everything runs on one domain (e.g., `https://your-app.onrender.com`)
-
-### Method 1: Blueprint (Recommended - 1 Click!)
-
-The easiest way - automatically creates PostgreSQL database:
-
-1. **Push your code to GitHub**
-
+1. **Push to GitHub**
 2. **Connect to Render**:
-   - Go to https://dashboard.render.com/
-   - Click "New +" → "Blueprint"
-   - Connect your GitHub repository
-   - Render will automatically:
-     - Create a PostgreSQL database (free tier)
-     - Create a Web Service
-     - Set all environment variables
-     - Run migrations
-
-3. **Deploy!**
-   - Click "Apply"
-   - Wait for build and deployment
-   - Your app will be available at `https://your-service-name.onrender.com`
-
-### Method 2: Manual Setup
-
-If you prefer manual configuration:
-
-#### Step 1: Create PostgreSQL Database
-
-1. Go to https://dashboard.render.com/
-2. Click "New +" → "PostgreSQL"
-3. Name: `funny-friends-db`
-4. Select **Free** plan
-5. Create Database
-
-#### Step 2: Create Web Service
-
-1. Click "New +" → "Web Service"
-2. Connect your GitHub repository
-3. Configure:
-
-   | Setting | Value |
-   |---------|-------|
-   | **Name** | `funny-friends` |
-   | **Environment** | `Node` |
-   | **Build Command** | `npm run render-build` |
-   | **Start Command** | `npm start` |
-
-4. **Set Environment Variables**:
+   - Go to [Render Dashboard](https://dashboard.render.com/)
+   - Click "New" → "Blueprint"
+   - Connect your repository
+3. **Set Environment Variables**:
    ```
-   NODE_ENV=production
-   JWT_SECRET=<generate-a-strong-secret>
-   DATABASE_URL=<copy-from-postgresql-service>
+   JWT_SECRET=<generate-64-char-random>
+   ADMIN_SETUP_KEY=<generate-32-char-random>
+   CLIENT_URL=https://your-app.onrender.com
    ```
+4. **Deploy**
 
-   **To get DATABASE_URL**:
-   - Go to your PostgreSQL service
-   - Copy the "Internal Connection String"
-   - Format: `postgresql://user:pass@host:5432/database`
-
-5. **Deploy!**
-   - Click "Create Web Service"
-   - Render will build and deploy
-
-### Build Process Explained
-
-When you deploy, this happens:
-
-```bash
-# 1. Render runs the build command:
-npm run render-build
-
-# Which executes:
-npm install                    # Install root dependencies
-(cd client && npm install)     # Install client dependencies  
-(cd client && npm run build)   # Build React app to client/dist/
-
-# 2. Render runs the start command:
-npm start
-
-# Which executes:
-cd server && npm start         # Start Express server
-
-# 3. Express server:
-# - Serves API endpoints
-# - Handles WebSocket connections
-# - Serves static files from ../client/dist/
-```
-
-### Troubleshooting Render Deployment
-
-**Build Fails - "vite: not found"**
-```
-Solution: Make sure package.json has:
-"render-build": "npm install && (cd client && npm install && npm run build)"
-```
-
-**Build Succeeds but Site Shows 404**
-```
-Problem: Express not serving static files
-Solution: Check that NODE_ENV=production is set
-```
-
-**Database Connection Errors**
-```
-Problem: DATABASE_URL not set or incorrect
-Solution: Copy exact connection string from PostgreSQL service
-```
-
-**CORS Errors**
-```
-Problem: Frontend can't connect to backend
-Solution: In production, both run on same domain (no CORS needed)
-Make sure you're accessing via the Render URL, not localhost
-```
-
-**WebSocket Connection Fails**
-```
-Problem: Socket.io not connecting
-Solution: Check browser console for errors
-Make sure you're using wss:// for WebSocket (Render handles this)
-```
-
-## Environment Variables Reference
-
-### For Local Development (SQLite)
-
-Create `server/.env`:
-```env
-DATABASE_URL="file:./dev.db"
-JWT_SECRET="local-dev-secret"
-CLIENT_URL="http://localhost:5173"
-PORT=3000
-NODE_ENV=development
-```
-
-### For Production (PostgreSQL)
-
-Set in Render Dashboard:
-```env
-DATABASE_URL="postgresql://user:password@host:5432/database?schema=public"
-JWT_SECRET="your-production-secret-key"
-PORT=10000
-NODE_ENV=production
-```
+See [Production Deployment Guide](PRODUCTION_DEPLOYMENT.md) for detailed instructions.
 
 ## Available Scripts
 
 ### Development
 ```bash
-npm run dev          # Start both client and server
-npm run server       # Start backend only
-npm run client       # Start frontend only
+npm run dev              # Start both client and server
+npm run server           # Backend only
+npm run client           # Frontend only
+npm run install-all      # Install all dependencies
 ```
 
 ### Production
 ```bash
-npm run build        # Build client for production
-npm start            # Start production server
-npm run render-build # Build for Render deployment
+npm run build            # Build client for production
+npm start                # Start production server
+npm run render-build     # Build for Render deployment
 ```
 
 ### Database
 ```bash
 cd server
-npm run db:push              # Push schema (SQLite)
-npm run db:push:sqlite       # Push schema (SQLite explicit)
-npm run db:migrate           # Run migrations (PostgreSQL)
-npm run db:studio            # Open Prisma Studio
+npm run db:push          # Push schema changes
+npm run db:migrate       # Run migrations
+npm run db:studio        # Open Prisma Studio
+npm run db:seed          # Seed sample data
 ```
+
+## Security Features
+
+### Implemented
+
+- ✅ **HTTP-only Cookies**: Tokens never accessible to JavaScript
+- ✅ **Rate Limiting**: 5 login attempts per 15 minutes
+- ✅ **Input Validation**: Zod schemas for all inputs
+- ✅ **Helmet.js**: Security headers (CSP, HSTS, etc.)
+- ✅ **CORS**: Whitelist-based origin validation
+- ✅ **RBAC**: Role-based access control
+- ✅ **Password Hashing**: bcrypt with 12 rounds
+- ✅ **JWT Expiration**: 8-hour token lifetime
+- ✅ **SQL Injection Protection**: Prisma ORM with parameterized queries
+- ✅ **XSS Protection**: Content Security Policy headers
+
+### Environment Security
+
+- 🔒 Secrets stored in environment variables only
+- 🔒 `.env` files excluded from git
+- 🔒 No hardcoded credentials
+- 🔒 One-time setup key for initial admin
 
 ## Project Structure
 
@@ -301,86 +218,119 @@ npm run db:studio            # Open Prisma Studio
 funny-friends/
 ├── client/                 # React frontend
 │   ├── src/
+│   │   ├── components/    # Reusable components
 │   │   ├── pages/         # Page components
-│   │   ├── context/       # React contexts (Auth, etc.)
-│   │   └── config.js      # Centralized config
-│   ├── dist/              # Production build (auto-generated)
+│   │   ├── context/       # React contexts
+│   │   └── config.js      # API configuration
 │   └── package.json
-├── server/                 # Express backend
-│   ├── server.js          # Main entry point
+├── server/                 # Node.js backend
+│   ├── prisma/
+│   │   ├── schema.prisma  # Database schema
+│   │   └── dev.db         # SQLite (gitignored)
 │   ├── game/
 │   │   └── GameManager.js # Game logic
-│   ├── prisma/
-│   │   ├── schema.prisma      # PostgreSQL schema
-│   │   └── schema.sqlite.prisma # SQLite schema
+│   ├── server.js          # Main server file
 │   └── package.json
-├── package.json           # Root config & scripts
-├── render.yaml            # Render blueprint
-├── README.md              # This file
-└── POSTGRESQL_SETUP.md    # Database setup guide
+├── .gitignore             # Git exclusions
+├── LOCAL_DEVELOPMENT.md   # Local setup guide
+├── PRODUCTION_DEPLOYMENT.md # Production guide
+├── SECURITY_AUDIT.md      # Security audit report
+└── README.md              # This file
 ```
 
-## How the Static Site Works
+## Documentation
 
-### Development vs Production
+- 📖 [LOCAL_DEVELOPMENT.md](LOCAL_DEVELOPMENT.md) - Complete local development guide
+- 🚀 [PRODUCTION_DEPLOYMENT.md](PRODUCTION_DEPLOYMENT.md) - Production deployment instructions
+- 🔐 [SECURITY_AUDIT.md](SECURITY_AUDIT.md) - Security audit and hardening details
 
-**Development:**
+## Environment Variables
+
+### Server (.env)
+
+| Variable | Description | Required |
+|----------|-------------|----------|
+| `DATABASE_URL` | Database connection string | Yes |
+| `JWT_SECRET` | JWT signing secret (64+ chars) | Yes |
+| `ADMIN_SETUP_KEY` | First-time setup key (32+ chars) | Yes |
+| `CLIENT_URL` | Allowed CORS origin | Yes |
+| `PORT` | Server port | No (default: 3000) |
+| `NODE_ENV` | Environment mode | No (default: development) |
+
+### Client (.env.local)
+
+| Variable | Description | Required |
+|----------|-------------|----------|
+| `VITE_BACKEND_URL` | Backend URL (empty for same-origin) | No |
+
+## Troubleshooting
+
+### Port Already in Use
+```bash
+npx kill-port 3000  # or 5173
 ```
-Browser → Vite Dev Server (5173) → API calls → Express (3000)
+
+### Database Issues
+```bash
+cd server
+rm prisma/dev.db prisma/dev.db-journal  # Reset SQLite
+npx prisma db push  # Recreate
 ```
 
-**Production:**
+### CORS Errors
+- Check `CLIENT_URL` matches your actual URL
+- Include protocol (http:// or https://)
+
+### Build Errors
+```bash
+# Clear caches
+rm -rf node_modules client/node_modules server/node_modules
+rm -rf client/dist
+npm run install-all
 ```
-Browser → Express Server (serves static files + API + WebSocket)
-         ↓
-    ┌────┴────┐
-    ↓         ↓
-Static Files   API Endpoints
-(client/dist)  (/api/*)
-```
 
-### Why This Architecture?
+## Security Best Practices
 
-1. **Single Domain**: No CORS issues in production
-2. **Simpler Deployment**: One service instead of two
-3. **Better Performance**: Static files served by Express
-4. **Cost Effective**: Free tier on Render supports this
-5. **Scalable**: Can add CDN later if needed
+1. **Never commit `.env` files** - They are already in `.gitignore`
+2. **Use strong passwords** - Minimum 8 characters, mixed case, numbers
+3. **Rotate secrets regularly** - Especially `JWT_SECRET` and `ADMIN_SETUP_KEY`
+4. **Keep dependencies updated** - Run `npm audit` regularly
+5. **Monitor logs** - Check for unusual activity
+6. **Use HTTPS in production** - Render provides this automatically
 
-## Free Tier Limits (Render)
+## Contributing
 
-- **Web Service**: 512 MB RAM, sleeps after 15 min inactivity
-- **PostgreSQL**: 1 GB storage, shared CPU
-- **Bandwidth**: 100 GB/month
+1. Fork the repository
+2. Create a feature branch (`git checkout -b feature/amazing-feature`)
+3. Commit your changes (`git commit -m 'Add amazing feature'`)
+4. Push to the branch (`git push origin feature/amazing-feature`)
+5. Open a Pull Request
 
-Perfect for small groups of friends playing occasionally!
+Please read our security guidelines before contributing.
 
 ## Future Roadmap
 
 - [x] Teen Patti game
+- [x] Security hardening
 - [ ] Rummy game
 - [ ] Poker game
 - [ ] User avatars
 - [ ] Game statistics
 - [ ] Mobile app
-
-## Contributing
-
-1. Fork the repository
-2. Create a feature branch
-3. Commit your changes
-4. Push to the branch
-5. Open a Pull Request
+- [ ] Tournament mode
 
 ## License
 
 MIT License - feel free to use this project for your own games!
 
+## Support
+
+- 📧 Open an issue on GitHub
+- 📖 Check the documentation links above
+- 🔐 Review the security audit for security questions
+
 ---
 
 Built with ❤️ for friends who love to play games together!
 
-**Need Help?**
-- Check [POSTGRESQL_SETUP.md](POSTGRESQL_SETUP.md) for database setup
-- Review [DEPLOYMENT_STATUS.md](DEPLOYMENT_STATUS.md) for testing checklist
-- Open an issue on GitHub
+**Security First | Production Ready | Open Source**
