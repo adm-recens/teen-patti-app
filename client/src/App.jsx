@@ -1,6 +1,7 @@
-import React from 'react';
+import React, { useState, useEffect } from 'react';
 import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
 import { AuthProvider, useAuth } from './context/AuthContext';
+import { API_URL } from './config';
 
 // Pages
 import Welcome from './pages/Welcome';
@@ -12,6 +13,37 @@ import AdminDashboard from './pages/AdminDashboard';
 import OperatorDashboard from './pages/OperatorDashboard';
 import Viewer from './pages/Viewer';
 import Rummy from './pages/Rummy';
+import Setup from './pages/Setup';
+
+// Setup Check Component
+const SetupCheck = ({ children }) => {
+  const [needsSetup, setNeedsSetup] = useState(null);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    const checkSetup = async () => {
+      try {
+        const res = await fetch(`${API_URL}/api/setup/status`);
+        const data = await res.json();
+        setNeedsSetup(data.needsSetup);
+      } catch (e) {
+        console.error('Failed to check setup status:', e);
+        setNeedsSetup(false);
+      } finally {
+        setLoading(false);
+      }
+    };
+    checkSetup();
+  }, []);
+
+  if (loading) return <div>Loading...</div>;
+
+  if (needsSetup) {
+    return <Navigate to="/setup" replace />;
+  }
+
+  return children;
+};
 
 // Protected Route Component
 const ProtectedRoute = ({ children, requireOperator = false, requireAdmin = false }) => {
@@ -37,8 +69,17 @@ const ProtectedRoute = ({ children, requireOperator = false, requireAdmin = fals
 const AppRoutes = () => {
   return (
     <Routes>
-      <Route path="/" element={<Welcome />} />
-      <Route path="/login" element={<Login />} />
+      <Route path="/setup" element={<Setup />} />
+      <Route path="/" element={
+        <SetupCheck>
+          <Welcome />
+        </SetupCheck>
+      } />
+      <Route path="/login" element={
+        <SetupCheck>
+          <Login />
+        </SetupCheck>
+      } />
       <Route path="/logout" element={<Logout />} />
       <Route path="/viewer/:sessionName" element={<Viewer />} />
       <Route path="/rummy" element={<Rummy />} />
