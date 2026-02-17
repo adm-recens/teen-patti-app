@@ -450,42 +450,18 @@ app.post('/api/auth/setup', authLimiter, asyncHandler(async (req, res) => {
   // ... rest of setup logic ...
 }));
 
-// 2. RESET API - Clears database for re-setup (Requires Admin Key)
-app.post('/api/setup/reset', requireAdmin, asyncHandler(async (req, res) => {
-  const { setupKey } = req.body;
-  const configuredKey = process.env.ADMIN_SETUP_KEY;
-
-  if (!configuredKey) {
-    return ApiResponse.error(res, 'System configuration error', 500);
-  }
-
-  if (!setupKey || setupKey.trim() !== configuredKey.trim()) {
-    return ApiResponse.error(res, 'Invalid setup key', 401);
-  }
-
-  // Delete all data in reverse dependency order
-  await prisma.$transaction([
-    prisma.loginAttempt.deleteMany(),
-    prisma.playerAddRequest.deleteMany(),
-    prisma.gameHand.deleteMany(),
-    prisma.player.deleteMany(),
-    prisma.gameSession.deleteMany(),
-    prisma.userSession.deleteMany(),
-    prisma.userGamePermission.deleteMany(),
-    prisma.user.deleteMany(),
-    prisma.gameType.deleteMany() // Optional: Wipe game types too for total reset
-  ]);
-
-  console.log('[SYSTEM] Database reset by administrator');
-  return ApiResponse.success(res, { message: 'System reset successfully' });
-}));
-token: sessionId,
-  ipAddress: clientIp,
+// 2. Create Session linked to the new User
+const newSession = await tx.userSession.create({
+  data: {
+    id: sessionId,
+    userId: newAdmin.id, // Use real ID from created user
+    token: sessionId,
+    ipAddress: clientIp,
     userAgent,
     deviceInfo: generateDeviceFingerprint(req),
-      expiresAt
-      }
-    });
+    expiresAt
+  }
+});
 
 return { admin: newAdmin, session: newSession };
   });
@@ -527,6 +503,36 @@ prisma.loginAttempt.create({
 return ApiResponse.success(res, {
   user: { id: admin.id, username: admin.username, role: admin.role }
 }, 201);
+}));
+
+// 2. RESET API - Clears database for re-setup (Requires Admin Key)
+app.post('/api/setup/reset', requireAdmin, asyncHandler(async (req, res) => {
+  const { setupKey } = req.body;
+  const configuredKey = process.env.ADMIN_SETUP_KEY;
+
+  if (!configuredKey) {
+    return ApiResponse.error(res, 'System configuration error', 500);
+  }
+
+  if (!setupKey || setupKey.trim() !== configuredKey.trim()) {
+    return ApiResponse.error(res, 'Invalid setup key', 401);
+  }
+
+  // Delete all data in reverse dependency order
+  await prisma.$transaction([
+    prisma.loginAttempt.deleteMany(),
+    prisma.playerAddRequest.deleteMany(),
+    prisma.gameHand.deleteMany(),
+    prisma.player.deleteMany(),
+    prisma.gameSession.deleteMany(),
+    prisma.userSession.deleteMany(),
+    prisma.userGamePermission.deleteMany(),
+    prisma.user.deleteMany(),
+    prisma.gameType.deleteMany() // Optional: Wipe game types too for total reset
+  ]);
+
+  console.log('[SYSTEM] Database reset by administrator');
+  return ApiResponse.success(res, { message: 'System reset successfully' });
 }));
 
 // 2. LOGIN API - Optimized with early returns, transactions, and parallel ops
