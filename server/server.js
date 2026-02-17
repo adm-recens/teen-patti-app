@@ -430,9 +430,10 @@ app.post('/api/auth/setup', authLimiter, asyncHandler(async (req, res) => {
   const sessionId = generateSecureRandom(32);
   const expiresAt = new Date(Date.now() + SECURITY_CONFIG.SESSION_ABSOLUTE_TIMEOUT_HOURS * 60 * 60 * 1000);
 
-  // Use transaction for atomic user + session creation
-  const [admin, session] = await prisma.$transaction([
-    prisma.user.create({
+  // Use interactive transaction for atomic user + session creation with correct FK
+  const { admin, session } = await prisma.$transaction(async (tx) => {
+    // 1. Create User
+    const newAdmin = await tx.user.create({
       data: {
         username,
         password: hashedPassword,
@@ -440,25 +441,25 @@ app.post('/api/auth/setup', authLimiter, asyncHandler(async (req, res) => {
         lastPasswordChange: new Date(),
         failedLoginAttempts: 0
       }
-    }),
-    prisma.userSession.create({
+    });
+
+    // 2. Create Session linked to the new User
+    const newSession = await tx.userSession.create({
       data: {
         id: sessionId,
-        userId: 0, // Will be updated after user creation
+        userId: newAdmin.id, // Use real ID from created user
         token: sessionId,
         ipAddress: clientIp,
         userAgent,
         deviceInfo: generateDeviceFingerprint(req),
         expiresAt
       }
-    })
-  ]);
+    });
 
-  // Update session with correct userId
-  await prisma.userSession.update({
-    where: { id: sessionId },
-    data: { userId: admin.id }
+    return { admin: newAdmin, session: newSession };
   });
+
+
 
   // Generate JWT
   const token = jwt.sign(
