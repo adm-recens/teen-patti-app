@@ -392,7 +392,19 @@ app.post('/api/auth/setup', authLimiter, asyncHandler(async (req, res) => {
   const { setupKey, username, password } = setupData;
 
   // Validate setup key
-  if (setupKey !== process.env.ADMIN_SETUP_KEY) {
+  const configuredKey = process.env.ADMIN_SETUP_KEY;
+
+  if (!configuredKey) {
+    console.error('[CRITICAL] ADMIN_SETUP_KEY is not set in environment variables!');
+    return ApiResponse.error(res, 'System configuration error', 500);
+  }
+
+  // Debug logging (Masked for security)
+  const receivedKeySafe = setupKey ? `${setupKey.substring(0, 3)}...${setupKey.slice(-3)}` : 'undefined';
+  const configuredKeySafe = `${configuredKey.substring(0, 3)}...${configuredKey.slice(-3)}`;
+  console.log(`[DEBUG] Setup execution - Received: ${receivedKeySafe}, Expected: ${configuredKeySafe}, Match: ${setupKey.trim() === configuredKey.trim()}`);
+
+  if (!setupKey || setupKey.trim() !== configuredKey.trim()) {
     // Log failure and return (fire and forget)
     prisma.loginAttempt.create({
       data: {
