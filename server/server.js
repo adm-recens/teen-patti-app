@@ -42,7 +42,7 @@ app.set('trust proxy', 1);
 const prisma = require('./db');
 
 // Export prisma for use in controllers
-module.exports = { prisma, app, server, io }; // Initial export, will be populated later
+// module.exports moved to end of file
 
 // ALLOW CONNECTION FROM ANYWHERE (For simplicity)
 // ALLOW CONNECTION FROM ANYWHERE (For simplicity)
@@ -1964,3 +1964,6 @@ process.on('SIGINT', () => {
     });
   });
 });
+
+// Export app instance and other components for use in other modules
+module.exports = { prisma, app, server, io };
