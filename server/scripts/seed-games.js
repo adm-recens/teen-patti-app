@@ -2,27 +2,8 @@
 const path = require('path');
 // Load from project root .env.local for local dev (server/scripts -> server -> root)
 require('dotenv').config({ path: path.join(__dirname, '../../.env.local') });
-const { PrismaClient } = require('@prisma/client');
 const bcrypt = require('bcryptjs');
-
-const { PrismaPg } = require('@prisma/adapter-pg');
-const { Pool } = require('pg');
-
-const connectionString = process.env.DATABASE_URL;
-
-if (!connectionString) {
-  console.error('❌ DATABASE_URL is not defined.');
-  process.exit(1);
-}
-
-const isProduction = process.env.NODE_ENV === 'production';
-
-const pool = new Pool({
-  connectionString,
-  ssl: isProduction ? { rejectUnauthorized: false } : false
-});
-const adapter = new PrismaPg(pool);
-const prisma = new PrismaClient({ adapter });
+const prisma = require('../db');
 
 async function main() {
   console.log('Seeding database...');

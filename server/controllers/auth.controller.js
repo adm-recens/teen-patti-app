@@ -1,5 +1,4 @@
 // Unified Authentication Controller with Role-Based Routing
-const { PrismaClient } = require('@prisma/client');
 const jwt = require('jsonwebtoken');
 const {
   SECURITY_CONFIG,
@@ -13,7 +12,7 @@ const {
   comparePassword,
 } = require('../utils/security');
 
-const prisma = new PrismaClient();
+const prisma = require('../db');
 
 // CSRF Token storage (in production, use Redis)
 const csrfTokens = new Map();
@@ -49,11 +48,11 @@ const ApiResponse = {
     res.status(403).json({ success: false, error: message });
   },
   locked: (res, message, remainingMinutes) => {
-    res.status(423).json({ 
-      success: false, 
-      error: 'Account locked', 
+    res.status(423).json({
+      success: false,
+      error: 'Account locked',
       message,
-      remainingMinutes 
+      remainingMinutes
     });
   }
 };
@@ -62,26 +61,26 @@ const ApiResponse = {
 function checkUsernameRateLimit(username) {
   const now = Date.now();
   const attempts = usernameAttempts.get(username);
-  
+
   if (!attempts) {
     usernameAttempts.set(username, { count: 1, firstAttempt: now });
     return { limited: false };
   }
-  
+
   if (now - attempts.firstAttempt > USERNAME_LOCKOUT_DURATION) {
     usernameAttempts.set(username, { count: 1, firstAttempt: now });
     return { limited: false };
   }
-  
+
   if (attempts.count >= SECURITY_CONFIG.AUTH_RATE_LIMIT_MAX) {
     const remainingTime = Math.ceil((USERNAME_LOCKOUT_DURATION - (now - attempts.firstAttempt)) / 1000 / 60);
-    return { 
-      limited: true, 
+    return {
+      limited: true,
       remainingMinutes: remainingTime,
       message: `Too many attempts for this username. Please try again in ${remainingTime} minutes.`
     };
   }
-  
+
   attempts.count++;
   return { limited: false };
 }
@@ -172,7 +171,7 @@ async function handleLogin(req, res) {
   const clientIp = req.ip;
   const userAgent = req.headers['user-agent'];
   const isProduction = process.env.NODE_ENV === 'production';
-  
+
   try {
     // Check username rate limiting
     const rateLimitCheck = checkUsernameRateLimit(req.body.username);
@@ -183,7 +182,7 @@ async function handleLogin(req, res) {
     // Check if setup needed
     const firstUser = await prisma.user.findFirst({ select: { id: true } });
     if (!firstUser) {
-      return ApiResponse.error(res, 'System not initialized', 400, { 
+      return ApiResponse.error(res, 'System not initialized', 400, {
         needsSetup: true,
         setupUrl: '/setup'
       });
@@ -192,7 +191,7 @@ async function handleLogin(req, res) {
     const { username, password } = req.body;
 
     // Fetch user with security fields
-    const user = await prisma.user.findUnique({ 
+    const user = await prisma.user.findUnique({
       where: { username },
       select: {
         id: true,
@@ -203,11 +202,11 @@ async function handleLogin(req, res) {
         lockedUntil: true
       }
     });
-    
+
     // Handle non-existent user with timing-safe comparison
     if (!user) {
       await comparePassword(password, '$2a$12$abcdefghijklmnopqrstuvwxycdefghijklmnopqrstu');
-      
+
       prisma.loginAttempt.create({
         data: {
           username,
@@ -216,8 +215,8 @@ async function handleLogin(req, res) {
           success: false,
           reason: 'Invalid credentials'
         }
-      }).catch(() => {});
-      
+      }).catch(() => { });
+
       return ApiResponse.error(res, 'Invalid credentials', 401);
     }
 
@@ -232,9 +231,9 @@ async function handleLogin(req, res) {
           success: false,
           reason: `Account locked for ${lockoutStatus.remainingMinutes} minutes`
         }
-      }).catch(() => {});
-      
-      return ApiResponse.locked(res, 
+      }).catch(() => { });
+
+      return ApiResponse.locked(res,
         `Too many failed attempts. Please try again in ${lockoutStatus.remainingMinutes} minutes.`,
         lockoutStatus.remainingMinutes
       );
@@ -242,11 +241,11 @@ async function handleLogin(req, res) {
 
     // Validate credentials
     const validCredentials = await comparePassword(password, user.password);
-    
+
     if (!validCredentials) {
       const newFailedAttempts = user.failedLoginAttempts + 1;
       const shouldLock = newFailedAttempts >= SECURITY_CONFIG.MAX_FAILED_ATTEMPTS;
-      
+
       await Promise.all([
         prisma.user.update({
           where: { id: user.id },
@@ -314,14 +313,14 @@ async function handleLogin(req, res) {
 
     // Generate tokens
     const token = jwt.sign(
-      { 
-        id: user.id, 
+      {
+        id: user.id,
         role: user.role,
         sessionId,
         iat: Math.floor(Date.now() / 1000)
       },
       process.env.JWT_SECRET,
-      { 
+      {
         expiresIn: `${SECURITY_CONFIG.SESSION_ABSOLUTE_TIMEOUT_HOURS}h`,
         issuer: SECURITY_CONFIG.JWT_ISSUER,
         audience: SECURITY_CONFIG.JWT_AUDIENCE
@@ -359,7 +358,7 @@ async function handleLogin(req, res) {
 // Check current session
 async function checkSession(req, res) {
   const token = req.cookies.token || req.headers.authorization?.split(' ')[1];
-  
+
   if (!token) {
     return res.json({ user: null });
   }
@@ -410,7 +409,7 @@ async function checkSession(req, res) {
 async function handleLogout(req, res) {
   try {
     const token = req.cookies.token || req.headers.authorization?.split(' ')[1];
-    
+
     if (token) {
       try {
         const decoded = jwt.verify(token, process.env.JWT_SECRET);

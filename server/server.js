@@ -38,10 +38,11 @@ const server = http.createServer(app);
 // Trust proxy for rate limiting (required when behind Render's load balancer)
 app.set('trust proxy', 1);
 
-// Setup Prisma with PostgreSQL adapter for v7
-const pool = new Pool({ connectionString: process.env.DATABASE_URL });
-const adapter = new PrismaPg(pool);
-const prisma = new PrismaClient({ adapter });
+// Setup Prisma with PostgreSQL adapter for v7 (Centralized in db.js)
+const prisma = require('./db');
+
+// Export prisma for use in controllers
+module.exports = { prisma, app, server, io }; // Initial export, will be populated later
 
 // ALLOW CONNECTION FROM ANYWHERE (For simplicity)
 // ALLOW CONNECTION FROM ANYWHERE (For simplicity)
