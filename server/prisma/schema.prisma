@@ -11,19 +11,67 @@ model User {
   username  String   @unique
   password  String   
   role      String   @default("GUEST") // 'ADMIN', 'OPERATOR', 'PLAYER', 'GUEST'
+  failedLoginAttempts Int @default(0)
+  lockedUntil DateTime?
+  lastPasswordChange DateTime @default(now())
   createdAt DateTime @default(now())
   player    Player?
+  sessions  UserSession[]
+  allowedGames UserGamePermission[] // Games this operator/admin can manage
+}
+
+model GameType {
+  id          String   @id @default(uuid())
+  code        String   @unique // 'teen-patti', 'rummy', etc.
+  name        String
+  description String?
+  icon        String   // Emoji or icon name
+  color       String   // Tailwind gradient classes
+  maxPlayers  Int
+  minPlayers  Int
+  status      String   @default("active") // active, beta, coming-soon
+  isActive    Boolean  @default(true)
+  createdAt   DateTime @default(now())
+  sessions    GameSession[]
+  permissions UserGamePermission[]
 }
 
 model GameSession {
   id          Int        @id @default(autoincrement())
   name        String     @unique
+  gameTypeId  String
+  gameType    GameType   @relation(fields: [gameTypeId], references: [id])
+  createdBy   Int        // User ID who created this session
   totalRounds Int
   currentRound Int       @default(1)
   isActive    Boolean    @default(true)
+  isPublic    Boolean    @default(false) // Can viewers join without invitation?
+  status      String     @default("waiting") // waiting, playing, paused, completed
   createdAt   DateTime   @default(now())
+  updatedAt   DateTime   @updatedAt
   hands       GameHand[]
   players     Player[]
+  playerAddRequests PlayerAddRequest[]
+  
+  @@index([gameTypeId])
+  @@index([createdBy])
+  @@index([isActive])
+  @@index([status])
+}
+
+model UserGamePermission {
+  id          String   @id @default(uuid())
+  userId      Int
+  user        User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  gameTypeId  String
+  gameType    GameType @relation(fields: [gameTypeId], references: [id], onDelete: Cascade)
+  canCreate   Boolean  @default(true)
+  canManage   Boolean  @default(true)
+  createdAt   DateTime @default(now())
+  
+  @@unique([userId, gameTypeId])
+  @@index([userId])
+  @@index([gameTypeId])
 }
 
 model GameHand {
@@ -50,4 +98,47 @@ model Player {
   session        GameSession? @relation(fields: [sessionId], references: [id], onDelete: Cascade)
   
   @@unique([name, sessionId])  // Player names must be unique within a session
+}
+
+model PlayerAddRequest {
+  id          Int      @id @default(autoincrement())
+  sessionId   Int
+  session     GameSession @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+  playerName  String
+  status      String   @default("PENDING") // PENDING, APPROVED, DECLINED
+  requestedBy String   // Role of requester (OPERATOR or ADMIN)
+  requestedAt DateTime @default(now())
+  resolvedAt  DateTime?
+  resolvedBy  String?  // Admin who resolved it
+}
+
+model LoginAttempt {
+  id          Int      @id @default(autoincrement())
+  username    String   // Attempted username
+  ipAddress   String   // Client IP
+  userAgent   String?  // Client user agent
+  success     Boolean  // Whether login succeeded
+  reason      String?  // Failure reason (if failed)
+  createdAt   DateTime @default(now())
+  
+  @@index([username, createdAt])
+  @@index([ipAddress, createdAt])
+}
+
+model UserSession {
+  id          String   @id @default(uuid())
+  userId      Int
+  user        User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  token       String   @unique // JWT token identifier
+  ipAddress   String
+  userAgent   String?
+  deviceInfo  String?  // Device fingerprint
+  isValid     Boolean  @default(true)
+  createdAt   DateTime @default(now())
+  lastUsedAt  DateTime @default(now())
+  expiresAt   DateTime
+  
+  @@index([userId])
+  @@index([token])
+  @@index([isValid])
 }

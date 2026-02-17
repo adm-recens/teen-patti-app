@@ -6,7 +6,7 @@ import { API_URL } from '../config';
 
 const Profile = () => {
   const navigate = useNavigate();
-  const { user, logout } = useAuth();
+  const { user, logout, updatePassword, authenticatedFetch } = useAuth();
   const [activeTab, setActiveTab] = useState('profile');
   const [loading, setLoading] = useState(false);
   const [message, setMessage] = useState({ type: '', text: '' });
@@ -22,6 +22,20 @@ const Profile = () => {
     newPassword: '',
     confirmPassword: ''
   });
+  
+  // Password validation state
+  const [passwordErrors, setPasswordErrors] = useState([]);
+  
+  // Password requirements
+  const passwordRequirements = [
+    { label: 'At least 8 characters', regex: /.{8,}/ },
+    { label: 'One uppercase letter (A-Z)', regex: /[A-Z]/ },
+    { label: 'One lowercase letter (a-z)', regex: /[a-z]/ },
+    { label: 'One number (0-9)', regex: /[0-9]/ },
+    { label: 'One special character (!@#$%^&*)', regex: /[!@#$%^&*()_+\-=[\]{}|;:,.<>?]/ },
+    { label: 'No 3+ repeated characters', regex: /^(?!.*(.)\1{2,}).*$/ },
+    { label: 'No sequential characters (abc, 123)', regex: /^(?!.*(?:abc|bcd|cde|def|efg|fgh|ghi|hij|ijk|jkl|klm|lmn|mno|nop|opq|pqr|qrs|rst|stu|tuv|uvw|vwx|wxy|xyz|012|123|234|345|456|567|678|789)).*$/i },
+  ];
 
   useEffect(() => {
     if (user) {
@@ -35,11 +49,9 @@ const Profile = () => {
     setLoading(true);
 
     try {
-      const res = await fetch(`${API_URL}/api/user/profile`, {
+      const res = await authenticatedFetch(`${API_URL}/api/user/profile`, {
         method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(profileData),
-        credentials: 'include'
+        body: JSON.stringify(profileData)
       });
 
       const data = await res.json();
@@ -61,37 +73,40 @@ const Profile = () => {
   const handlePasswordChange = async (e) => {
     e.preventDefault();
     setMessage({ type: '', text: '' });
+    setPasswordErrors([]);
 
     if (passwordData.newPassword !== passwordData.confirmPassword) {
       setMessage({ type: 'error', text: 'New passwords do not match' });
       return;
     }
 
-    if (passwordData.newPassword.length < 8) {
-      setMessage({ type: 'error', text: 'New password must be at least 8 characters' });
+    // Check password requirements
+    const failedRequirements = passwordRequirements.filter(
+      req => !req.regex.test(passwordData.newPassword)
+    );
+    
+    if (failedRequirements.length > 0) {
+      setPasswordErrors(failedRequirements.map(r => r.label));
       return;
     }
 
     setLoading(true);
 
     try {
-      const res = await fetch(`${API_URL}/api/user/password`, {
-        method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          currentPassword: passwordData.currentPassword,
-          newPassword: passwordData.newPassword
-        }),
-        credentials: 'include'
-      });
+      const result = await updatePassword(
+        passwordData.currentPassword,
+        passwordData.newPassword
+      );
 
-      const data = await res.json();
-
-      if (res.ok) {
-        setMessage({ type: 'success', text: 'Password changed successfully!' });
+      if (result.success) {
+        setMessage({ type: 'success', text: result.message || 'Password changed successfully!' });
         setPasswordData({ currentPassword: '', newPassword: '', confirmPassword: '' });
+        setPasswordErrors([]);
       } else {
-        setMessage({ type: 'error', text: data.error || 'Failed to change password' });
+        setMessage({ type: 'error', text: result.error || 'Failed to change password' });
+        if (result.details) {
+          setPasswordErrors(result.details);
+        }
       }
     } catch (e) {
       setMessage({ type: 'error', text: 'Network error. Please try again.' });
@@ -262,15 +277,62 @@ const Profile = () => {
                 <input
                   type="password"
                   value={passwordData.newPassword}
-                  onChange={(e) => setPasswordData({ ...passwordData, newPassword: e.target.value })}
+                  onChange={(e) => {
+                    setPasswordData({ ...passwordData, newPassword: e.target.value });
+                    // Clear errors when user types
+                    if (passwordErrors.length > 0) {
+                      setPasswordErrors([]);
+                    }
+                  }}
                   className="w-full px-4 py-3 bg-slate-800 border border-slate-700 rounded-xl text-white placeholder-slate-500 focus:outline-none focus:border-purple-500"
                   placeholder="Enter new password"
                   minLength={8}
                   required
                 />
-                <p className="mt-1 text-xs text-slate-500">
-                  Must be at least 8 characters
-                </p>
+                
+                {/* Password Requirements */}
+                <div className="mt-3 p-3 bg-slate-800/50 rounded-xl">
+                  <p className="text-xs font-medium text-slate-400 mb-2">Password Requirements:</p>
+                  <div className="space-y-1">
+                    {passwordRequirements.map((req, idx) => {
+                      const isMet = req.regex.test(passwordData.newPassword);
+                      return (
+                        <div 
+                          key={idx} 
+                          className={`flex items-center gap-2 text-xs transition-colors ${
+                            isMet ? 'text-green-400' : 'text-slate-500'
+                          }`}
+                        >
+                          <div className={`w-4 h-4 rounded-full flex items-center justify-center ${
+                            isMet ? 'bg-green-500/20' : 'bg-slate-700'
+                          }`}>
+                            {isMet ? (
+                              <CheckCircle size={10} className="text-green-400" />
+                            ) : (
+                              <div className="w-1.5 h-1.5 rounded-full bg-slate-500" />
+                            )}
+                          </div>
+                          {req.label}
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+                
+                {/* Validation Errors */}
+                {passwordErrors.length > 0 && (
+                  <div className="mt-3 p-3 bg-red-500/20 border border-red-500/30 rounded-xl">
+                    <p className="text-xs font-medium text-red-400 mb-1">Please fix the following:</p>
+                    <ul className="text-xs text-red-300 space-y-1">
+                      {passwordErrors.map((error, idx) => (
+                        <li key={idx} className="flex items-center gap-1">
+                          <AlertCircle size={10} />
+                          {error}
+                        </li>
+                      ))}
+                    </ul>
+                  </div>
+                )}
               </div>
 
               <div>

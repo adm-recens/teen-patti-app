@@ -136,20 +136,9 @@ class GameManager extends EventEmitter {
     startRound() {
         console.log('[DEBUG] startRound called. Total players:', this.gameState.players.length);
         
-        // Check if we should advance to next round (if coming from SHOWDOWN)
-        if (this.gameState.phase === 'SHOWDOWN') {
-            this.currentRound++;
-            console.log(`[DEBUG] Advanced to round ${this.currentRound}`);
-        }
-        
-        // Check if session is complete
+        // Check if session is complete (round was already incremented in endHand)
         if (this.currentRound > this.totalRounds) {
             this.isActive = false;
-            this.emit('session_ended', { 
-                reason: 'MAX_ROUNDS_REACHED',
-                finalRound: this.currentRound - 1,
-                totalRounds: this.totalRounds
-            });
             return { success: false, error: "Session complete" };
         }
         
@@ -469,6 +458,12 @@ class GameManager extends EventEmitter {
             }
         });
 
+        // Increment round counter here (when hand actually ends)
+        this.currentRound++;
+        
+        // Check if session is complete
+        const isSessionOver = this.currentRound > this.totalRounds;
+
         // Emit state change first so clients see SHOWDOWN phase
         this.emit('state_change', this.getPublicState());
         
@@ -478,8 +473,18 @@ class GameManager extends EventEmitter {
             pot: this.gameState.pot,
             netChanges,
             currentRound: this.currentRound,
-            isSessionOver: this.currentRound >= this.totalRounds
+            isSessionOver
         });
+        
+        // If session is over, emit session_ended event
+        if (isSessionOver) {
+            this.isActive = false;
+            this.emit('session_ended', { 
+                reason: 'MAX_ROUNDS_REACHED',
+                finalRound: this.currentRound - 1,
+                totalRounds: this.totalRounds
+            });
+        }
     }
 
     getPublicState() {

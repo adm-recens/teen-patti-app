@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
-import { Eye, LogOut, Play, Trash2, User, Check, X, ShieldAlert, Edit3, Plus, Trophy } from 'lucide-react';
+import { Eye, LogOut, Play, Trash2, User, Check, X, ShieldAlert, Edit3, Plus, Trophy, UserPlus, Send, CheckCircle, AlertCircle } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
 import { API_URL } from '../config';
 
@@ -38,6 +38,13 @@ const GameRoom = () => {
 
     // Viewer Requests (Operator Only - kept local or sourced from server?)
     const [viewerRequests, setViewerRequests] = useState([]);
+    
+    // Player Addition Requests
+    const [showPlayerRequestModal, setShowPlayerRequestModal] = useState(false);
+    const [newPlayerNames, setNewPlayerNames] = useState('');
+    const [playerRequestLoading, setPlayerRequestLoading] = useState(false);
+    const [playerRequestError, setPlayerRequestError] = useState('');
+    const [playerRequestSuccess, setPlayerRequestSuccess] = useState('');
 
     // --- SOCKET LISTENERS ---
     useEffect(() => {
@@ -109,8 +116,8 @@ const GameRoom = () => {
 
         socket.on('access_denied', () => setAccessStatus('DENIED'));
 
-        socket.on('session_ended', ({ reason }) => {
-            setSessionSummaryData({ reason });
+        socket.on('session_ended', ({ reason, finalRound, totalRounds }) => {
+            setSessionSummaryData({ reason, finalRound, totalRounds });
             setShowSessionSummary(true);
         });
 
@@ -202,6 +209,59 @@ const GameRoom = () => {
         } else {
             // Start the next round automatically
             sendGameAction('START_GAME');
+        }
+    };
+
+    // Player Addition Request Handler
+    const handleRequestNewPlayers = async () => {
+        setPlayerRequestLoading(true);
+        setPlayerRequestError('');
+        setPlayerRequestSuccess('');
+        
+        // Parse player names (comma-separated or new-line separated)
+        const playerNames = newPlayerNames
+            .split(/[\n,]/)
+            .map(name => name.trim())
+            .filter(name => name.length > 0);
+        
+        if (playerNames.length === 0) {
+            setPlayerRequestError('Please enter at least one player name');
+            setPlayerRequestLoading(false);
+            return;
+        }
+        
+        // Check for duplicates
+        const uniqueNames = [...new Set(playerNames)];
+        if (uniqueNames.length !== playerNames.length) {
+            setPlayerRequestError('Duplicate player names found. Please ensure all names are unique.');
+            setPlayerRequestLoading(false);
+            return;
+        }
+        
+        try {
+            const res = await fetch(`${API_URL}/api/sessions/${sessionName}/player-requests`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ playerNames: uniqueNames }),
+                credentials: 'include'
+            });
+            
+            const data = await res.json();
+            
+            if (res.ok) {
+                setPlayerRequestSuccess(data.message || `Successfully requested to add ${uniqueNames.length} player(s)`);
+                setNewPlayerNames('');
+                setTimeout(() => {
+                    setShowPlayerRequestModal(false);
+                    setPlayerRequestSuccess('');
+                }, 2000);
+            } else {
+                setPlayerRequestError(data.error || 'Failed to submit request');
+            }
+        } catch (e) {
+            setPlayerRequestError('Error submitting request. Please try again.');
+        } finally {
+            setPlayerRequestLoading(false);
         }
     };
 
@@ -638,16 +698,57 @@ const GameRoom = () => {
 
             {showRoundSummary && roundSummaryData && (
                 <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/90 backdrop-blur-sm p-4">
-                    <div className="bg-white p-8 rounded-3xl max-w-md w-full text-center shadow-2xl animate-in zoom-in duration-300 relative overflow-hidden">
+                    <div className="bg-white p-8 rounded-3xl max-w-lg w-full text-center shadow-2xl animate-in zoom-in duration-300 relative overflow-hidden max-h-[90vh] overflow-y-auto">
                         <div className="absolute top-0 left-0 w-full h-2 bg-gradient-to-r from-yellow-400 to-yellow-600"></div>
                         <Trophy className="mx-auto text-yellow-500 mb-4 drop-shadow-lg" size={64} />
                         <h2 className="text-3xl font-black text-slate-900 mb-1 uppercase tracking-tight">Winner!</h2>
                         <p className="text-2xl font-bold text-blue-600 mb-6">{roundSummaryData.winner.name}</p>
 
+                        {/* Round Info */}
+                        <div className="bg-blue-50 rounded-2xl p-4 mb-4 border border-blue-100">
+                            <p className="text-blue-600 uppercase text-xs font-bold tracking-widest mb-1">Round</p>
+                            <p className="text-2xl font-black text-slate-900">{roundSummaryData.currentRound} of {totalRounds}</p>
+                        </div>
+
                         <div className="bg-slate-50 rounded-2xl p-4 mb-6 border border-slate-100">
                             <p className="text-slate-400 uppercase text-xs font-bold tracking-widest mb-1">Total Pot</p>
                             <p className="text-4xl font-black text-slate-900 tracking-tighter">{roundSummaryData.pot}</p>
                         </div>
+
+                        {/* Net Changes */}
+                        {roundSummaryData.netChanges && Object.keys(roundSummaryData.netChanges).length > 0 && (
+                            <div className="mb-6">
+                                <h3 className="text-sm font-bold text-slate-500 uppercase tracking-widest mb-3">Net Changes</h3>
+                                <div className="space-y-2">
+                                    {Object.entries(roundSummaryData.netChanges).map(([playerId, change]) => {
+                                        const player = players.find(p => p.id === parseInt(playerId));
+                                        if (!player) return null;
+                                        return (
+                                            <div key={playerId} className="flex justify-between items-center bg-slate-50 p-3 rounded-xl">
+                                                <span className="font-bold text-slate-700">{player.name}</span>
+                                                <span className={`font-bold ${change >= 0 ? 'text-green-600' : 'text-red-600'}`}>
+                                                    {change >= 0 ? '+' : ''}{change}
+                                                </span>
+                                            </div>
+                                        );
+                                    })}
+                                </div>
+                            </div>
+                        )}
+
+                        {/* Request New Players Button (only if not session over) */}
+                        {!roundSummaryData.isSessionOver && (
+                            <div className="mb-4">
+                                <button 
+                                    onClick={() => setShowPlayerRequestModal(true)}
+                                    className="w-full py-3 bg-green-50 border-2 border-green-200 text-green-700 rounded-xl font-bold hover:bg-green-100 transition-all flex items-center justify-center gap-2"
+                                >
+                                    <UserPlus size={20} />
+                                    Request New Players
+                                </button>
+                                <p className="text-xs text-slate-400 mt-2">Ask admin to add friends for the next round</p>
+                            </div>
+                        )}
 
                         <button onClick={nextRound} className="w-full py-4 bg-gradient-to-r from-blue-600 to-blue-700 text-white rounded-xl font-bold text-lg shadow-xl shadow-blue-500/30 hover:scale-[1.02] active:scale-[0.98] transition-all">
                             {roundSummaryData.isSessionOver ? "View Final Results" : "Next Round"}
@@ -656,11 +757,81 @@ const GameRoom = () => {
                 </div>
             )}
 
+            {/* Player Request Modal */}
+            {showPlayerRequestModal && (
+                <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/80 backdrop-blur-sm p-4">
+                    <div className="bg-white p-6 rounded-2xl max-w-md w-full shadow-2xl animate-in zoom-in duration-200">
+                        <h3 className="text-xl font-black text-slate-900 mb-2 flex items-center gap-2">
+                            <UserPlus className="text-green-600" />
+                            Request New Players
+                        </h3>
+                        <p className="text-slate-500 text-sm mb-4">
+                            Enter player names (one per line or comma-separated). Admin approval required.
+                        </p>
+                        
+                        <textarea
+                            value={newPlayerNames}
+                            onChange={(e) => setNewPlayerNames(e.target.value)}
+                            placeholder="e.g.&#10;John&#10;Alice&#10;Bob"
+                            className="w-full h-32 bg-slate-50 border-2 border-slate-200 rounded-xl p-3 font-medium text-slate-900 focus:border-green-500 outline-none transition-all resize-none mb-4"
+                        />
+                        
+                        {playerRequestError && (
+                            <div className="mb-4 p-3 bg-red-50 border border-red-200 rounded-xl flex items-center gap-2 text-red-600 text-sm">
+                                <AlertCircle size={16} />
+                                {playerRequestError}
+                            </div>
+                        )}
+                        
+                        {playerRequestSuccess && (
+                            <div className="mb-4 p-3 bg-green-50 border border-green-200 rounded-xl flex items-center gap-2 text-green-600 text-sm">
+                                <CheckCircle size={16} />
+                                {playerRequestSuccess}
+                            </div>
+                        )}
+                        
+                        <div className="flex gap-3">
+                            <button
+                                onClick={() => {
+                                    setShowPlayerRequestModal(false);
+                                    setNewPlayerNames('');
+                                    setPlayerRequestError('');
+                                }}
+                                className="flex-1 py-3 bg-slate-100 text-slate-600 rounded-xl font-bold hover:bg-slate-200 transition-all"
+                            >
+                                Cancel
+                            </button>
+                            <button
+                                onClick={handleRequestNewPlayers}
+                                disabled={playerRequestLoading || !newPlayerNames.trim()}
+                                className="flex-1 py-3 bg-green-600 text-white rounded-xl font-bold hover:bg-green-700 transition-all disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2"
+                            >
+                                {playerRequestLoading ? (
+                                    <>
+                                        <div className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin"></div>
+                                        Sending...
+                                    </>
+                                ) : (
+                                    <>
+                                        <Send size={18} />
+                                        Send Request
+                                    </>
+                                )}
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            )}
+
             {showSessionSummary && sessionSummaryData && (
                 <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/95 backdrop-blur p-4">
                     <div className="bg-slate-900 border border-slate-800 p-8 rounded-3xl max-w-lg w-full text-center">
                         <h2 className="text-4xl font-black text-white mb-4">Session Ended</h2>
-                        <p className="text-slate-400 mb-4">{sessionSummaryData.reason}</p>
+                        <p className="text-slate-400 mb-4">
+                            {sessionSummaryData.reason === 'OPERATOR_ENDED' ? 'Ended by operator' : 
+                             sessionSummaryData.reason === 'MAX_ROUNDS_REACHED' ? 'All rounds completed' : 
+                             sessionSummaryData.reason}
+                        </p>
                         {sessionSummaryData.finalRound && (
                             <p className="text-yellow-500 mb-8 font-bold">
                                 Completed {sessionSummaryData.finalRound} of {sessionSummaryData.totalRounds} rounds

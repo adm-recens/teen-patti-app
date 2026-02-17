@@ -17,12 +17,17 @@ const AdminDashboard = () => {
     const [createError, setCreateError] = useState('');
     const [createSuccess, setCreateSuccess] = useState('');
     const [loading, setLoading] = useState(true);
+    
+    // Player Addition Requests
+    const [playerRequests, setPlayerRequests] = useState([]);
+    const [requestsLoading, setRequestsLoading] = useState(false);
 
     const isAdmin = user?.role === 'ADMIN';
 
     useEffect(() => {
         if (!isAdmin) return;
         fetchData();
+        fetchPlayerRequests();
     }, [isAdmin]);
 
     const fetchData = async () => {
@@ -47,6 +52,89 @@ const AdminDashboard = () => {
             console.error('Error fetching data:', e);
         } finally {
             setLoading(false);
+        }
+    };
+    
+    const fetchPlayerRequests = async () => {
+        try {
+            const res = await fetch(`${API_URL}/api/admin/player-requests`, {
+                credentials: 'include'
+            });
+            if (res.ok) {
+                const requests = await res.json();
+                setPlayerRequests(requests);
+            }
+        } catch (e) {
+            console.error('Error fetching player requests:', e);
+        }
+    };
+    
+    const handleApprovePlayerRequest = async (requestId) => {
+        setRequestsLoading(true);
+        try {
+            const res = await fetch(`${API_URL}/api/admin/player-requests/${requestId}/resolve`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ approved: true }),
+                credentials: 'include'
+            });
+            
+            if (res.ok) {
+                await fetchPlayerRequests();
+                await fetchData(); // Refresh sessions to show new players
+            } else {
+                alert('Failed to approve request');
+            }
+        } catch (e) {
+            console.error(e);
+            alert('Error approving request');
+        } finally {
+            setRequestsLoading(false);
+        }
+    };
+    
+    const handleDeclinePlayerRequest = async (requestId) => {
+        setRequestsLoading(true);
+        try {
+            const res = await fetch(`${API_URL}/api/admin/player-requests/${requestId}/resolve`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ approved: false }),
+                credentials: 'include'
+            });
+            
+            if (res.ok) {
+                await fetchPlayerRequests();
+            } else {
+                alert('Failed to decline request');
+            }
+        } catch (e) {
+            console.error(e);
+            alert('Error declining request');
+        } finally {
+            setRequestsLoading(false);
+        }
+    };
+    
+    const handleApproveAllRequests = async (sessionName) => {
+        setRequestsLoading(true);
+        try {
+            const res = await fetch(`${API_URL}/api/admin/sessions/${sessionName}/approve-all-players`, {
+                method: 'POST',
+                credentials: 'include'
+            });
+            
+            if (res.ok) {
+                await fetchPlayerRequests();
+                await fetchData();
+            } else {
+                alert('Failed to approve all requests');
+            }
+        } catch (e) {
+            console.error(e);
+            alert('Error approving all requests');
+        } finally {
+            setRequestsLoading(false);
         }
     };
 
@@ -144,13 +232,15 @@ const AdminDashboard = () => {
 
     const handleViewSession = async (sessionName) => {
         try {
-            const res = await fetch(`${API_URL}/api/admin/sessions/${sessionName}`, {
-                credentials: 'include'
-            });
+            const [sessionRes, requestsRes] = await Promise.all([
+                fetch(`${API_URL}/api/admin/sessions/${sessionName}`, { credentials: 'include' }),
+                fetch(`${API_URL}/api/sessions/${sessionName}/player-requests`, { credentials: 'include' })
+            ]);
 
-            if (res.ok) {
-                const data = await res.json();
-                setSessionDetails(data);
+            if (sessionRes.ok) {
+                const sessionData = await sessionRes.json();
+                const requestsData = requestsRes.ok ? await requestsRes.json() : [];
+                setSessionDetails({ ...sessionData, playerRequests: requestsData });
                 setSelectedSession(sessionName);
                 setShowSessionModal(true);
             }
@@ -261,6 +351,82 @@ const AdminDashboard = () => {
                         </div>
                     </div>
                 </div>
+                
+                {/* Player Addition Requests Section */}
+                {playerRequests.length > 0 && (
+                    <div className="mb-8">
+                        <div className="bg-gradient-to-r from-orange-500 to-orange-600 rounded-2xl p-6 text-white shadow-lg shadow-orange-500/20">
+                            <div className="flex items-center justify-between mb-4">
+                                <div className="flex items-center gap-3">
+                                    <div className="w-12 h-12 bg-white/20 rounded-xl flex items-center justify-center">
+                                        <UserPlus size={24} className="text-white" />
+                                    </div>
+                                    <div>
+                                        <h2 className="text-xl font-black">Player Addition Requests</h2>
+                                        <p className="text-orange-100">{playerRequests.length} pending request(s)</p>
+                                    </div>
+                                </div>
+                            </div>
+                            
+                            <div className="space-y-3">
+                                {/* Group requests by session */}
+                                {Object.entries(
+                                    playerRequests.reduce((acc, req) => {
+                                        if (!acc[req.session.name]) acc[req.session.name] = [];
+                                        acc[req.session.name].push(req);
+                                        return acc;
+                                    }, {})
+                                ).map(([sessionName, requests]) => (
+                                    <div key={sessionName} className="bg-white/10 rounded-xl p-4 backdrop-blur-sm">
+                                        <div className="flex items-center justify-between mb-3">
+                                            <div>
+                                                <span className="font-bold text-lg">{sessionName}</span>
+                                                <span className="text-orange-100 text-sm ml-2">
+                                                    Round {requests[0].session.currentRound}/{requests[0].session.totalRounds}
+                                                </span>
+                                            </div>
+                                            <button
+                                                onClick={() => handleApproveAllRequests(sessionName)}
+                                                disabled={requestsLoading}
+                                                className="px-4 py-2 bg-white text-orange-600 rounded-lg font-bold hover:bg-orange-50 transition-colors disabled:opacity-50"
+                                            >
+                                                Approve All ({requests.length})
+                                            </button>
+                                        </div>
+                                        <div className="space-y-2">
+                                            {requests.map(req => (
+                                                <div key={req.id} className="flex items-center justify-between bg-white/10 rounded-lg p-3">
+                                                    <div className="flex items-center gap-3">
+                                                        <div className="w-8 h-8 bg-white/20 rounded-lg flex items-center justify-center font-bold">
+                                                            {req.playerName[0].toUpperCase()}
+                                                        </div>
+                                                        <span className="font-medium">{req.playerName}</span>
+                                                    </div>
+                                                    <div className="flex gap-2">
+                                                        <button
+                                                            onClick={() => handleApprovePlayerRequest(req.id)}
+                                                            disabled={requestsLoading}
+                                                            className="px-3 py-1.5 bg-green-500 hover:bg-green-600 rounded-lg font-bold text-sm transition-colors disabled:opacity-50"
+                                                        >
+                                                            Approve
+                                                        </button>
+                                                        <button
+                                                            onClick={() => handleDeclinePlayerRequest(req.id)}
+                                                            disabled={requestsLoading}
+                                                            className="px-3 py-1.5 bg-red-500 hover:bg-red-600 rounded-lg font-bold text-sm transition-colors disabled:opacity-50"
+                                                        >
+                                                            Decline
+                                                        </button>
+                                                    </div>
+                                                </div>
+                                            ))}
+                                        </div>
+                                    </div>
+                                ))}
+                            </div>
+                        </div>
+                    </div>
+                )}
 
                 <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
                     {/* Sessions Section */}
@@ -537,6 +703,48 @@ const AdminDashboard = () => {
                         </div>
                         
                         <div className="p-6 overflow-y-auto max-h-[60vh]">
+                            {/* Pending Player Requests */}
+                            {sessionDetails.playerRequests?.filter(r => r.status === 'PENDING').length > 0 && (
+                                <div className="mb-6">
+                                    <h3 className="font-bold text-slate-800 mb-3 flex items-center gap-2">
+                                        <UserPlus size={18} className="text-orange-500" />
+                                        Pending Player Requests ({sessionDetails.playerRequests.filter(r => r.status === 'PENDING').length})
+                                    </h3>
+                                    <div className="bg-orange-50 border border-orange-200 rounded-xl p-4">
+                                        <div className="space-y-2">
+                                            {sessionDetails.playerRequests
+                                                .filter(r => r.status === 'PENDING')
+                                                .map(request => (
+                                                    <div key={request.id} className="flex items-center justify-between bg-white p-3 rounded-lg">
+                                                        <div className="flex items-center gap-3">
+                                                            <div className="w-8 h-8 bg-orange-100 text-orange-600 rounded-lg flex items-center justify-center font-bold">
+                                                                {request.playerName[0].toUpperCase()}
+                                                            </div>
+                                                            <span className="font-medium text-slate-800">{request.playerName}</span>
+                                                        </div>
+                                                        <div className="flex gap-2">
+                                                            <button
+                                                                onClick={() => handleApprovePlayerRequest(request.id)}
+                                                                disabled={requestsLoading}
+                                                                className="px-3 py-1.5 bg-green-500 hover:bg-green-600 text-white rounded-lg font-bold text-sm transition-colors disabled:opacity-50"
+                                                            >
+                                                                Approve
+                                                            </button>
+                                                            <button
+                                                                onClick={() => handleDeclinePlayerRequest(request.id)}
+                                                                disabled={requestsLoading}
+                                                                className="px-3 py-1.5 bg-red-500 hover:bg-red-600 text-white rounded-lg font-bold text-sm transition-colors disabled:opacity-50"
+                                                            >
+                                                                Decline
+                                                            </button>
+                                                        </div>
+                                                    </div>
+                                                ))}
+                                        </div>
+                                    </div>
+                                </div>
+                            )}
+
                             {/* Players */}
                             <div className="mb-6">
                                 <h3 className="font-bold text-slate-800 mb-3 flex items-center gap-2">

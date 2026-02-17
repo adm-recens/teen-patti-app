@@ -16,6 +16,21 @@ const bcrypt = require('bcryptjs');
 const cookieParser = require('cookie-parser');
 const morgan = require('morgan');
 const GameManager = require('./game/GameManager');
+const {
+  SECURITY_CONFIG,
+  validatePasswordStrength,
+  generateCSRFToken,
+  generateDeviceFingerprint,
+  checkAccountLockout,
+  sanitizeInput,
+  getSecureCookieOptions,
+  generateSecureRandom,
+  hashPassword,
+  comparePassword,
+} = require('./utils/security');
+
+// Import Auth Controller
+const authController = require('./controllers/auth.controller');
 
 const app = express();
 const server = http.createServer(app);
@@ -51,22 +66,84 @@ app.use(helmet({
       scriptSrc: ["'self'"],
       imgSrc: ["'self'", "data:", "https:"],
       connectSrc: ["'self'", "ws:", "wss:"],
+      fontSrc: ["'self'"],
+      objectSrc: ["'none'"],
+      upgradeInsecureRequests: [],
     },
   },
   crossOriginEmbedderPolicy: false,
+  hsts: {
+    maxAge: 31536000,
+    includeSubDomains: true,
+    preload: true
+  },
+  noSniff: true,
+  xssFilter: true,
+  referrerPolicy: { policy: 'strict-origin-when-cross-origin' }
 }));
 
 // Rate limiting
 const limiter = rateLimit({
-  windowMs: 15 * 60 * 1000, // 15 minutes
-  max: 100, // limit each IP to 100 requests per windowMs
-  message: { error: 'Too many requests, please try again later.' }
+  windowMs: SECURITY_CONFIG.RATE_LIMIT_WINDOW_MS,
+  max: SECURITY_CONFIG.RATE_LIMIT_MAX_REQUESTS,
+  message: { error: 'Too many requests, please try again later.' },
+  standardHeaders: true,
+  legacyHeaders: false,
 });
+
+// IP-based auth rate limiter
 const authLimiter = rateLimit({
   windowMs: 15 * 60 * 1000, // 15 minutes
-  max: 5, // limit each IP to 5 login attempts per windowMs
-  message: { error: 'Too many login attempts, please try again later.' }
+  max: SECURITY_CONFIG.AUTH_RATE_LIMIT_MAX,
+  message: { error: 'Too many login attempts from this IP. Please try again later.' },
+  standardHeaders: true,
+  legacyHeaders: false,
+  skipSuccessfulRequests: true, // Don't count successful logins
 });
+
+// Username-based rate limiting (in-memory with TTL)
+const usernameAttempts = new Map();
+const USERNAME_LOCKOUT_DURATION = 15 * 60 * 1000; // 15 minutes
+
+function checkUsernameRateLimit(username) {
+  const now = Date.now();
+  const attempts = usernameAttempts.get(username);
+
+  if (!attempts) {
+    usernameAttempts.set(username, { count: 1, firstAttempt: now });
+    return { limited: false };
+  }
+
+  // Reset if window has passed
+  if (now - attempts.firstAttempt > USERNAME_LOCKOUT_DURATION) {
+    usernameAttempts.set(username, { count: 1, firstAttempt: now });
+    return { limited: false };
+  }
+
+  // Check if limit reached
+  if (attempts.count >= SECURITY_CONFIG.AUTH_RATE_LIMIT_MAX) {
+    const remainingTime = Math.ceil((USERNAME_LOCKOUT_DURATION - (now - attempts.firstAttempt)) / 1000 / 60);
+    return {
+      limited: true,
+      remainingMinutes: remainingTime,
+      message: `Too many attempts for this username. Please try again in ${remainingTime} minutes.`
+    };
+  }
+
+  // Increment counter
+  attempts.count++;
+  return { limited: false };
+}
+
+// Clean up old username attempts periodically
+setInterval(() => {
+  const now = Date.now();
+  for (const [username, data] of usernameAttempts.entries()) {
+    if (now - data.firstAttempt > USERNAME_LOCKOUT_DURATION) {
+      usernameAttempts.delete(username);
+    }
+  }
+}, 60 * 60 * 1000); // Clean every hour
 
 app.use(limiter);
 app.use(morgan(process.env.NODE_ENV === 'production' ? 'combined' : 'dev'));
@@ -74,12 +151,12 @@ app.use(cors({
   origin: (origin, callback) => {
     // Allow requests with no origin (like mobile apps, curl, or same-origin)
     if (!origin) return callback(null, true);
-    
+
     // Allow same-origin requests (for static files)
     if (process.env.NODE_ENV === 'production' && origin.includes('onrender.com')) {
       return callback(null, true);
     }
-    
+
     // Check against allowed origins list
     if (ALLOWED_ORIGINS.includes(origin) || origin.startsWith('http://localhost') || origin.startsWith('http://127.0.0.1')) {
       callback(null, true);
@@ -120,14 +197,27 @@ const io = new Server(server, {
 // Input validation schemas
 const loginSchema = z.object({
   username: z.string().min(3).max(50).regex(/^[a-zA-Z0-9_]+$/),
-  password: z.string().min(8).max(100)
+  password: z.string().min(8).max(128)
 });
 
 const setupSchema = z.object({
   setupKey: z.string().min(10),
   username: z.string().min(3).max(50).regex(/^[a-zA-Z0-9_]+$/),
-  password: z.string().min(8).max(100)
+  password: z.string().min(8).max(128)
 });
+
+// CSRF Token storage (in production, use Redis)
+const csrfTokens = new Map();
+
+// Clean up expired CSRF tokens periodically
+setInterval(() => {
+  const now = Date.now();
+  for (const [token, data] of csrfTokens.entries()) {
+    if (now > data.expiresAt) {
+      csrfTokens.delete(token);
+    }
+  }
+}, 60 * 60 * 1000); // Clean every hour
 
 const sessionSchema = z.object({
   name: z.string().min(3).max(100),
@@ -164,7 +254,11 @@ const getUserFromRequest = (req) => {
   }
   if (!token) return null;
   try {
-    return jwt.verify(token, SECRET);
+    const decoded = jwt.verify(token, SECRET, {
+      issuer: SECURITY_CONFIG.JWT_ISSUER,
+      audience: SECURITY_CONFIG.JWT_AUDIENCE,
+    });
+    return decoded;
   } catch (e) {
     return null;
   }
@@ -174,9 +268,9 @@ const getUserFromRequest = (req) => {
 app.get('/api/setup/status', async (req, res) => {
   try {
     const userCount = await prisma.user.count();
-    res.json({ 
+    res.json({
       needsSetup: userCount === 0,
-      userCount: userCount 
+      userCount: userCount
     });
   } catch (error) {
     console.error('Error checking setup status:', error);
@@ -184,132 +278,679 @@ app.get('/api/setup/status', async (req, res) => {
   }
 });
 
+// Standardized API Response Helpers
+const ApiResponse = {
+  success: (res, data, statusCode = 200) => {
+    res.status(statusCode).json({ success: true, ...data });
+  },
+  error: (res, message, statusCode = 400, details = null) => {
+    const response = { success: false, error: message };
+    if (details) response.details = details;
+    res.status(statusCode).json(response);
+  },
+  unauthorized: (res, message = 'Unauthorized') => {
+    res.status(401).json({ success: false, error: message });
+  },
+  forbidden: (res, message = 'Forbidden') => {
+    res.status(403).json({ success: false, error: message });
+  },
+  locked: (res, message, remainingMinutes) => {
+    res.status(423).json({
+      success: false,
+      error: 'Account locked',
+      message,
+      remainingMinutes
+    });
+  }
+};
+
+// Async handler wrapper to reduce try-catch boilerplate
+const asyncHandler = (fn) => (req, res, next) => {
+  Promise.resolve(fn(req, res, next)).catch(next);
+};
+
 // Authorization middleware
-const requireAuth = (req, res, next) => {
-  const user = getUserFromRequest(req);
+const requireAuth = async (req, res, next) => {
+  const decoded = getUserFromRequest(req);
+  if (!decoded) {
+    return ApiResponse.unauthorized(res);
+  }
+
+  try {
+    // Single query to validate session and update timestamp
+    const session = await prisma.userSession.updateMany({
+      where: {
+        token: decoded.sessionId,
+        isValid: true,
+        expiresAt: { gt: new Date() }
+      },
+      data: { lastUsedAt: new Date() }
+    });
+
+    if (session.count === 0) {
+      return ApiResponse.unauthorized(res, 'Session expired or invalidated');
+    }
+
+    req.user = decoded;
+    next();
+  } catch (e) {
+    console.error('[ERROR] Session validation failed:', e);
+    return res.status(500).json({ error: 'Authentication error' });
+  }
+};
+
+const requireAdmin = async (req, res, next) => {
+  try {
+    await requireAuth(req, res, () => {
+      if (!req.user || req.user.role !== 'ADMIN') {
+        return ApiResponse.forbidden(res, 'Admin access required');
+      }
+      next();
+    });
+  } catch (e) {
+    return ApiResponse.forbidden(res, 'Admin access required');
+  }
+};
+
+const requireOperator = async (req, res, next) => {
+  try {
+    await requireAuth(req, res, () => {
+      if (!req.user || (req.user.role !== 'OPERATOR' && req.user.role !== 'ADMIN')) {
+        return ApiResponse.forbidden(res, 'Operator access required');
+      }
+      next();
+    });
+  } catch (e) {
+    return ApiResponse.forbidden(res, 'Operator access required');
+  }
+};
+
+// 1. SETUP API - Optimized with transactions and parallel operations
+app.post('/api/auth/setup', authLimiter, asyncHandler(async (req, res) => {
+  const clientIp = req.ip;
+  const userAgent = req.headers['user-agent'];
+  const isProduction = process.env.NODE_ENV === 'production';
+
+  // Check if already initialized
+  const existingUser = await prisma.user.findFirst({ select: { id: true } });
+  if (existingUser) {
+    return ApiResponse.error(res, 'System already initialized', 400);
+  }
+
+  // Validate input
+  let setupData;
+  try {
+    setupData = setupSchema.parse(req.body);
+  } catch (error) {
+    if (error instanceof z.ZodError) {
+      return ApiResponse.error(res, 'Invalid input', 400, error.errors);
+    }
+    throw error;
+  }
+
+  const { setupKey, username, password } = setupData;
+
+  // Validate setup key
+  if (setupKey !== process.env.ADMIN_SETUP_KEY) {
+    // Log failure and return (fire and forget)
+    prisma.loginAttempt.create({
+      data: {
+        username: 'SETUP_ATTEMPT',
+        ipAddress: clientIp,
+        userAgent,
+        success: false,
+        reason: 'Invalid setup key'
+      }
+    }).catch(() => { });
+
+    return ApiResponse.error(res, 'Invalid setup key', 401);
+  }
+
+  // Validate password strength
+  const passwordCheck = validatePasswordStrength(password);
+  if (!passwordCheck.valid) {
+    return ApiResponse.error(res, 'Password does not meet security requirements', 400, passwordCheck.errors);
+  }
+
+  // Hash password and prepare data
+  const hashedPassword = await hashPassword(password);
+  const sessionId = generateSecureRandom(32);
+  const expiresAt = new Date(Date.now() + SECURITY_CONFIG.SESSION_ABSOLUTE_TIMEOUT_HOURS * 60 * 60 * 1000);
+
+  // Use transaction for atomic user + session creation
+  const [admin, session] = await prisma.$transaction([
+    prisma.user.create({
+      data: {
+        username,
+        password: hashedPassword,
+        role: 'ADMIN',
+        lastPasswordChange: new Date(),
+        failedLoginAttempts: 0
+      }
+    }),
+    prisma.userSession.create({
+      data: {
+        id: sessionId,
+        userId: 0, // Will be updated after user creation
+        token: sessionId,
+        ipAddress: clientIp,
+        userAgent,
+        deviceInfo: generateDeviceFingerprint(req),
+        expiresAt
+      }
+    })
+  ]);
+
+  // Update session with correct userId
+  await prisma.userSession.update({
+    where: { id: sessionId },
+    data: { userId: admin.id }
+  });
+
+  // Generate JWT
+  const token = jwt.sign(
+    {
+      id: admin.id,
+      role: admin.role,
+      sessionId,
+      iat: Math.floor(Date.now() / 1000)
+    },
+    SECRET,
+    {
+      expiresIn: `${SECURITY_CONFIG.SESSION_ABSOLUTE_TIMEOUT_HOURS}h`,
+      issuer: SECURITY_CONFIG.JWT_ISSUER,
+      audience: SECURITY_CONFIG.JWT_AUDIENCE
+    }
+  );
+
+  // Set cookie and log success (parallel)
+  res.cookie('token', token, getSecureCookieOptions(
+    isProduction,
+    SECURITY_CONFIG.SESSION_ABSOLUTE_TIMEOUT_HOURS * 60 * 60 * 1000
+  ));
+
+  // Fire and forget logging
+  prisma.loginAttempt.create({
+    data: {
+      username,
+      ipAddress: clientIp,
+      userAgent,
+      success: true
+    }
+  }).catch(() => { });
+
+  return ApiResponse.success(res, {
+    user: { id: admin.id, username: admin.username, role: admin.role }
+  }, 201);
+}));
+
+// 2. LOGIN API - Optimized with early returns, transactions, and parallel ops
+app.post('/api/auth/login', authLimiter, asyncHandler(async (req, res) => {
+  const clientIp = req.ip;
+  const userAgent = req.headers['user-agent'];
+  const isProduction = process.env.NODE_ENV === 'production';
+
+  // Check username-based rate limiting (prevents brute force on same username from different IPs)
+  const rateLimitCheck = checkUsernameRateLimit(req.body.username);
+  if (rateLimitCheck.limited) {
+    return ApiResponse.locked(res, rateLimitCheck.message, rateLimitCheck.remainingMinutes);
+  }
+
+  // Check if setup is needed (single query)
+  const firstUser = await prisma.user.findFirst({ select: { id: true } });
+  if (!firstUser) {
+    return ApiResponse.error(res, 'System not initialized', 400, {
+      needsSetup: true,
+      message: 'Please complete system setup first'
+    });
+  }
+
+  // Validate input
+  let loginData;
+  try {
+    loginData = loginSchema.parse(req.body);
+  } catch (error) {
+    if (error instanceof z.ZodError) {
+      return ApiResponse.error(res, 'Invalid input', 400, error.errors);
+    }
+    throw error;
+  }
+
+  const { username, password } = loginData;
+
+  // Fetch user with all security fields in single query
+  const user = await prisma.user.findUnique({
+    where: { username },
+    select: {
+      id: true,
+      username: true,
+      password: true,
+      role: true,
+      failedLoginAttempts: true,
+      lockedUntil: true
+    }
+  });
+
+  // Handle non-existent user (same timing as existing user to prevent timing attacks)
   if (!user) {
-    return res.status(401).json({ error: 'Unauthorized' });
+    // Perform dummy bcrypt comparison to maintain consistent timing
+    await comparePassword(password, '$2a$12$abcdefghijklmnopqrstuvwxycdefghijklmnopqrstu');
+
+    // Fire and forget logging
+    prisma.loginAttempt.create({
+      data: {
+        username,
+        ipAddress: clientIp,
+        userAgent,
+        success: false,
+        reason: 'Invalid credentials'
+      }
+    }).catch(() => { });
+
+    return ApiResponse.error(res, 'Invalid credentials', 401);
   }
-  req.user = user;
-  next();
-};
 
-const requireAdmin = (req, res, next) => {
-  const user = getUserFromRequest(req);
-  if (!user || user.role !== 'ADMIN') {
-    return res.status(403).json({ error: 'Admin access required' });
+  // Check account lockout
+  const lockoutStatus = checkAccountLockout(user);
+  if (lockoutStatus.locked) {
+    prisma.loginAttempt.create({
+      data: {
+        username,
+        ipAddress: clientIp,
+        userAgent,
+        success: false,
+        reason: `Account locked for ${lockoutStatus.remainingMinutes} minutes`
+      }
+    }).catch(() => { });
+
+    return ApiResponse.locked(res,
+      `Too many failed attempts. Please try again in ${lockoutStatus.remainingMinutes} minutes.`,
+      lockoutStatus.remainingMinutes
+    );
   }
-  req.user = user;
-  next();
-};
 
-const requireOperator = (req, res, next) => {
-  const user = getUserFromRequest(req);
-  if (!user || (user.role !== 'OPERATOR' && user.role !== 'ADMIN')) {
-    return res.status(403).json({ error: 'Operator access required' });
+  // Validate credentials
+  const validCredentials = await comparePassword(password, user.password);
+
+  if (!validCredentials) {
+    // Increment failed attempts
+    const newFailedAttempts = user.failedLoginAttempts + 1;
+    const shouldLock = newFailedAttempts >= SECURITY_CONFIG.MAX_FAILED_ATTEMPTS;
+
+    const updateData = {
+      failedLoginAttempts: newFailedAttempts,
+      ...(shouldLock && {
+        lockedUntil: new Date(Date.now() + SECURITY_CONFIG.LOCKOUT_DURATION_MINUTES * 60 * 1000)
+      })
+    };
+
+    // Update user and log failure in parallel
+    await Promise.all([
+      prisma.user.update({
+        where: { id: user.id },
+        data: updateData
+      }),
+      prisma.loginAttempt.create({
+        data: {
+          username,
+          ipAddress: clientIp,
+          userAgent,
+          success: false,
+          reason: shouldLock ? 'Account locked' : 'Invalid credentials'
+        }
+      })
+    ]);
+
+    if (shouldLock) {
+      return ApiResponse.locked(res,
+        `Too many failed attempts. Account locked for ${SECURITY_CONFIG.LOCKOUT_DURATION_MINUTES} minutes.`,
+        SECURITY_CONFIG.LOCKOUT_DURATION_MINUTES
+      );
+    }
+
+    return ApiResponse.error(res, 'Invalid credentials', 401);
   }
-  req.user = user;
-  next();
-};
 
-// 1. SETUP API - Create first admin user (only when no users exist)
-app.post('/api/auth/setup', authLimiter, async (req, res) => {
-  try {
-    const userCount = await prisma.user.count();
-    if (userCount > 0) {
-      return res.status(400).json({ error: 'System already initialized' });
+  // === SUCCESS PATH ===
+  // Clean up expired sessions and reset failed attempts in parallel
+  const sessionId = generateSecureRandom(32);
+  const expiresAt = new Date(Date.now() + SECURITY_CONFIG.SESSION_ABSOLUTE_TIMEOUT_HOURS * 60 * 60 * 1000);
+
+  const [, session] = await Promise.all([
+    // Reset failed attempts and cleanup old sessions
+    prisma.$transaction([
+      prisma.user.update({
+        where: { id: user.id },
+        data: {
+          failedLoginAttempts: 0,
+          lockedUntil: null
+        }
+      }),
+      // Invalidate expired sessions for this user
+      prisma.userSession.updateMany({
+        where: {
+          userId: user.id,
+          expiresAt: { lt: new Date() }
+        },
+        data: { isValid: false }
+      })
+    ]),
+
+    // Create new session
+    prisma.userSession.create({
+      data: {
+        id: sessionId,
+        userId: user.id,
+        token: sessionId,
+        ipAddress: clientIp,
+        userAgent,
+        deviceInfo: generateDeviceFingerprint(req),
+        expiresAt
+      }
+    })
+  ]);
+
+  // Generate JWT and CSRF token
+  const token = jwt.sign(
+    {
+      id: user.id,
+      role: user.role,
+      sessionId,
+      iat: Math.floor(Date.now() / 1000)
+    },
+    SECRET,
+    {
+      expiresIn: `${SECURITY_CONFIG.SESSION_ABSOLUTE_TIMEOUT_HOURS}h`,
+      issuer: SECURITY_CONFIG.JWT_ISSUER,
+      audience: SECURITY_CONFIG.JWT_AUDIENCE
     }
+  );
 
-    const { setupKey, username, password } = setupSchema.parse(req.body);
+  const csrfToken = generateCSRFToken();
+  csrfTokens.set(csrfToken, {
+    userId: user.id,
+    createdAt: Date.now(),
+    expiresAt: Date.now() + SECURITY_CONFIG.CSRF_TOKEN_EXPIRY_MS
+  });
 
-    if (setupKey !== process.env.ADMIN_SETUP_KEY) {
-      return res.status(401).json({ error: 'Invalid setup key' });
+  // Set cookie
+  res.cookie('token', token, getSecureCookieOptions(
+    isProduction,
+    SECURITY_CONFIG.SESSION_ABSOLUTE_TIMEOUT_HOURS * 60 * 60 * 1000
+  ));
+
+  // Log success (fire and forget)
+  prisma.loginAttempt.create({
+    data: {
+      username,
+      ipAddress: clientIp,
+      userAgent,
+      success: true
     }
+  }).catch(() => { });
 
-    const hashed = await bcrypt.hash(password, 12);
-    const admin = await prisma.user.create({
-      data: { username, password: hashed, role: 'ADMIN' }
-    });
+  // Clear username rate limit on success
+  usernameAttempts.delete(username);
 
-    const token = jwt.sign({ id: admin.id, role: admin.role }, SECRET, { expiresIn: '8h' });
-    const isProduction = process.env.NODE_ENV === 'production';
+  return ApiResponse.success(res, {
+    user: {
+      id: user.id,
+      username: user.username,
+      role: user.role
+    },
+    csrfToken
+  });
+}));
 
-    res.cookie('token', token, {
-      httpOnly: true,
-      secure: isProduction,
-      sameSite: isProduction ? 'none' : 'lax',
-      maxAge: 8 * 60 * 60 * 1000, // 8 hours
-      path: '/'
-    });
-
-    return res.json({ success: true, user: { username: admin.username, role: admin.role } });
-  } catch (error) {
-    if (error instanceof z.ZodError) {
-      return res.status(400).json({ error: 'Invalid input', details: error.errors });
-    }
-    console.error('Setup error:', error);
-    return res.status(500).json({ error: 'Setup failed' });
-  }
-});
-
-// 2. LOGIN API
-app.post('/api/auth/login', authLimiter, async (req, res) => {
-  try {
-    // Check if setup is needed first
-    const userCount = await prisma.user.count();
-    if (userCount === 0) {
-      return res.status(400).json({ 
-        error: 'System not initialized', 
-        needsSetup: true,
-        message: 'Please complete system setup first' 
-      });
-    }
-
-    const { username, password } = loginSchema.parse(req.body);
-
-    const user = await prisma.user.findUnique({ where: { username } });
-    if (!user || !await bcrypt.compare(password, user.password)) {
-      return res.status(401).json({ error: 'Invalid credentials' });
-    }
-
-    const token = jwt.sign({ id: user.id, role: user.role }, SECRET, { expiresIn: '8h' });
-    const isProduction = process.env.NODE_ENV === 'production';
-
-    res.cookie('token', token, {
-      httpOnly: true,
-      secure: isProduction,
-      sameSite: isProduction ? 'none' : 'lax',
-      maxAge: 8 * 60 * 60 * 1000,
-      path: '/'
-    });
-
-    res.json({ success: true, user: { username: user.username, role: user.role } });
-  } catch (error) {
-    if (error instanceof z.ZodError) {
-      return res.status(400).json({ error: 'Invalid input', details: error.errors });
-    }
-    console.error('Login error:', error);
-    return res.status(500).json({ error: 'Login failed' });
-  }
-});
-
-// 1.5 CHECK SESSION API (Persist Login)
-app.get('/api/auth/me', (req, res) => {
+// 1.5 CHECK SESSION API - Optimized with single query
+app.get('/api/auth/me', asyncHandler(async (req, res) => {
   const decoded = getUserFromRequest(req);
   if (!decoded) return res.json({ user: null });
 
-  // Fetch fresh user data to ensure role is up to date
-  prisma.user.findUnique({ where: { id: decoded.id } }).then(user => {
-    if (!user) return res.json({ user: null });
-    res.json({ user: { id: user.id, role: user.role, username: user.username } });
-  }).catch(() => res.json({ user: null }));
+  // Single query to validate session and get user data
+  const sessionWithUser = await prisma.userSession.findFirst({
+    where: {
+      token: decoded.sessionId,
+      isValid: true,
+      expiresAt: { gt: new Date() },
+      userId: decoded.id
+    },
+    include: {
+      user: {
+        select: { id: true, username: true, role: true, lockedUntil: true }
+      }
+    }
+  });
+
+  if (!sessionWithUser || !sessionWithUser.user) {
+    return res.json({ user: null });
+  }
+
+  // Check if account is locked
+  const lockoutStatus = checkAccountLockout(sessionWithUser.user);
+  if (lockoutStatus.locked) {
+    return res.json({ user: null });
+  }
+
+  return ApiResponse.success(res, {
+    user: {
+      id: sessionWithUser.user.id,
+      role: sessionWithUser.user.role,
+      username: sessionWithUser.user.username
+    }
+  });
+}));
+
+// LOGOUT API - Optimized single operation
+app.post('/api/auth/logout', asyncHandler(async (req, res) => {
+  const decoded = getUserFromRequest(req);
+
+  if (decoded?.sessionId) {
+    // Single operation to invalidate session
+    await prisma.userSession.updateMany({
+      where: { token: decoded.sessionId },
+      data: { isValid: false }
+    });
+  }
+
+  res.clearCookie('token', {
+    httpOnly: true,
+    secure: process.env.NODE_ENV === 'production',
+    sameSite: process.env.NODE_ENV === 'production' ? 'strict' : 'lax',
+    path: '/'
+  });
+
+  return ApiResponse.success(res, { message: 'Logged out successfully' });
+}));
+
+// LOGOUT ALL SESSIONS API - Optimized
+app.post('/api/auth/logout-all', requireAuth, asyncHandler(async (req, res) => {
+  const result = await prisma.userSession.updateMany({
+    where: {
+      userId: req.user.id,
+      isValid: true
+    },
+    data: { isValid: false }
+  });
+
+  res.clearCookie('token', {
+    httpOnly: true,
+    secure: process.env.NODE_ENV === 'production',
+    sameSite: process.env.NODE_ENV === 'production' ? 'strict' : 'lax',
+    path: '/'
+  });
+
+  return ApiResponse.success(res, {
+    message: 'Logged out from all devices',
+    sessionsInvalidated: result.count
+  });
+}));
+
+// ============ UNIFIED AUTH API (v2) ============
+// New simplified authentication endpoints with role-based routing
+
+// POST /api/v2/auth/login - Unified login for all user types
+app.post('/api/v2/auth/login', authLimiter, asyncHandler(async (req, res) => {
+  await authController.handleLogin(req, res);
+}));
+
+// GET /api/v2/auth/me - Check current session with dashboard data
+app.get('/api/v2/auth/me', asyncHandler(async (req, res) => {
+  await authController.checkSession(req, res);
+}));
+
+// POST /api/v2/auth/logout - Unified logout
+app.post('/api/v2/auth/logout', asyncHandler(async (req, res) => {
+  await authController.handleLogout(req, res);
+}));
+
+// GET /api/v2/games - Get available games for current user
+app.get('/api/v2/games', asyncHandler(async (req, res) => {
+  const user = getUserFromRequest(req);
+
+  let games;
+  if (user && (user.role === 'ADMIN' || user.role === 'OPERATOR')) {
+    // Get games user has permission to manage
+    const userWithPermissions = await prisma.user.findUnique({
+      where: { id: user.id },
+      include: {
+        allowedGames: {
+          include: { gameType: true }
+        }
+      }
+    });
+
+    games = userWithPermissions?.allowedGames.map(ag => ({
+      id: ag.gameType.id,
+      code: ag.gameType.code,
+      name: ag.gameType.name,
+      description: ag.gameType.description,
+      icon: ag.gameType.icon,
+      color: ag.gameType.color,
+      maxPlayers: ag.gameType.maxPlayers,
+      minPlayers: ag.gameType.minPlayers,
+      canCreate: ag.canCreate,
+      canManage: ag.canManage
+    })) || [];
+  } else {
+    // Public games for guests/viewers
+    games = await prisma.gameType.findMany({
+      where: { isActive: true },
+      select: {
+        id: true,
+        code: true,
+        name: true,
+        description: true,
+        icon: true,
+        color: true,
+        maxPlayers: true,
+        minPlayers: true,
+        status: true
+      }
+    });
+  }
+
+  ApiResponse.success(res, { games });
+}));
+
+// GET /api/v2/sessions - Get sessions based on user role
+app.get('/api/v2/sessions', requireAuth, asyncHandler(async (req, res) => {
+  const { role, id: userId } = req.user;
+
+  let sessions;
+  if (role === 'ADMIN') {
+    // Admin sees all active sessions
+    sessions = await prisma.gameSession.findMany({
+      where: { isActive: true },
+      include: {
+        gameType: true,
+        _count: { select: { players: true } }
+      },
+      orderBy: { createdAt: 'desc' }
+    });
+  } else if (role === 'OPERATOR') {
+    // Operator sees their own sessions
+    sessions = await prisma.gameSession.findMany({
+      where: { createdBy: userId },
+      include: {
+        gameType: true,
+        _count: { select: { players: true } }
+      },
+      orderBy: { createdAt: 'desc' }
+    });
+  } else {
+    // Players see sessions they are part of
+    const playerSessions = await prisma.player.findMany({
+      where: { userId },
+      include: {
+        session: {
+          include: {
+            gameType: true,
+            _count: { select: { players: true } }
+          }
+        }
+      }
+    });
+    sessions = playerSessions.map(p => p.session);
+  }
+
+  ApiResponse.success(res, {
+    sessions: sessions.map(s => ({
+      id: s.id,
+      name: s.name,
+      gameType: s.gameType.name,
+      gameCode: s.gameType.code,
+      currentRound: s.currentRound,
+      totalRounds: s.totalRounds,
+      playerCount: s._count?.players || 0,
+      isActive: s.isActive,
+      status: s.status,
+      createdAt: s.createdAt
+    }))
+  });
+}));
+
+// CSRF PROTECTION
+// Get CSRF token (requires authentication)
+app.get('/api/csrf-token', requireAuth, (req, res) => {
+  const csrfToken = generateCSRFToken();
+  csrfTokens.set(csrfToken, {
+    userId: req.user.id,
+    createdAt: Date.now(),
+    expiresAt: Date.now() + SECURITY_CONFIG.CSRF_TOKEN_EXPIRY_MS
+  });
+  res.json({ csrfToken });
 });
 
-// LOGOUT API
-app.post('/api/auth/logout', (req, res) => {
-  res.clearCookie('token');
-  res.json({ success: true });
-});
+// CSRF validation middleware for state-changing operations
+const requireCSRF = (req, res, next) => {
+  const csrfToken = req.headers['x-csrf-token'] || req.body?._csrf;
+
+  if (!csrfToken) {
+    return res.status(403).json({ error: 'CSRF token required' });
+  }
+
+  const tokenData = csrfTokens.get(csrfToken);
+
+  if (!tokenData) {
+    return res.status(403).json({ error: 'Invalid CSRF token' });
+  }
+
+  if (Date.now() > tokenData.expiresAt) {
+    csrfTokens.delete(csrfToken);
+    return res.status(403).json({ error: 'CSRF token expired' });
+  }
+
+  // Verify token belongs to current user
+  if (tokenData.userId !== req.user.id) {
+    return res.status(403).json({ error: 'CSRF token mismatch' });
+  }
+
+  // Delete token after use (one-time use)
+  csrfTokens.delete(csrfToken);
+
+  next();
+};
 
 // PROFILE API - Get user profile
 app.get('/api/user/profile', requireAuth, async (req, res) => {
@@ -318,11 +959,11 @@ app.get('/api/user/profile', requireAuth, async (req, res) => {
       where: { id: req.user.id },
       select: { id: true, username: true, role: true, createdAt: true }
     });
-    
+
     if (!user) {
       return res.status(404).json({ error: 'User not found' });
     }
-    
+
     res.json({ user });
   } catch (error) {
     console.error('Error fetching profile:', error);
@@ -330,30 +971,30 @@ app.get('/api/user/profile', requireAuth, async (req, res) => {
   }
 });
 
-// PROFILE API - Update username
-app.put('/api/user/profile', requireAuth, async (req, res) => {
+// PROFILE API - Update username (CSRF protected)
+app.put('/api/user/profile', requireAuth, requireCSRF, async (req, res) => {
   try {
     const { username } = req.body;
-    
+
     if (!username || username.length < 3) {
       return res.status(400).json({ error: 'Username must be at least 3 characters' });
     }
-    
+
     // Check if username is already taken
     const existingUser = await prisma.user.findUnique({
       where: { username }
     });
-    
+
     if (existingUser && existingUser.id !== req.user.id) {
       return res.status(400).json({ error: 'Username already taken' });
     }
-    
+
     const updatedUser = await prisma.user.update({
       where: { id: req.user.id },
       data: { username },
       select: { id: true, username: true, role: true, createdAt: true }
     });
-    
+
     res.json({ success: true, user: updatedUser });
   } catch (error) {
     console.error('Error updating profile:', error);
@@ -361,40 +1002,61 @@ app.put('/api/user/profile', requireAuth, async (req, res) => {
   }
 });
 
-// PROFILE API - Change password
-app.put('/api/user/password', requireAuth, async (req, res) => {
+// PROFILE API - Change password (CSRF protected)
+app.put('/api/user/password', requireAuth, requireCSRF, async (req, res) => {
   try {
     const { currentPassword, newPassword } = req.body;
-    
-    if (!newPassword || newPassword.length < 8) {
-      return res.status(400).json({ error: 'New password must be at least 8 characters' });
+
+    // Validate new password strength
+    const passwordCheck = validatePasswordStrength(newPassword);
+    if (!passwordCheck.valid) {
+      return res.status(400).json({
+        error: 'Password does not meet security requirements',
+        details: passwordCheck.errors
+      });
     }
-    
+
     // Get user with password
     const user = await prisma.user.findUnique({
       where: { id: req.user.id }
     });
-    
+
     if (!user) {
       return res.status(404).json({ error: 'User not found' });
     }
-    
+
     // Verify current password
-    const isValidPassword = await bcrypt.compare(currentPassword, user.password);
+    const isValidPassword = await comparePassword(currentPassword, user.password);
     if (!isValidPassword) {
       return res.status(401).json({ error: 'Current password is incorrect' });
     }
-    
+
     // Hash new password
-    const hashedPassword = await bcrypt.hash(newPassword, 12);
-    
-    // Update password
+    const hashedPassword = await hashPassword(newPassword);
+
+    // Update password and track change
     await prisma.user.update({
       where: { id: req.user.id },
-      data: { password: hashedPassword }
+      data: {
+        password: hashedPassword,
+        lastPasswordChange: new Date()
+      }
     });
-    
-    res.json({ success: true, message: 'Password updated successfully' });
+
+    // Invalidate all other sessions (force re-login on other devices)
+    await prisma.userSession.updateMany({
+      where: {
+        userId: req.user.id,
+        isValid: true,
+        token: { not: req.user.sessionId } // Keep current session
+      },
+      data: { isValid: false }
+    });
+
+    res.json({
+      success: true,
+      message: 'Password updated successfully. Other sessions have been logged out for security.'
+    });
   } catch (error) {
     console.error('Error changing password:', error);
     res.status(500).json({ error: 'Failed to change password' });
@@ -527,9 +1189,23 @@ app.post('/api/admin/users', requireAdmin, async (req, res) => {
       return res.status(400).json({ error: "Invalid role" });
     }
 
-    const hashed = await bcrypt.hash(password, 12);
+    // Validate password strength
+    const passwordCheck = validatePasswordStrength(password);
+    if (!passwordCheck.valid) {
+      return res.status(400).json({
+        error: "Password does not meet security requirements",
+        details: passwordCheck.errors
+      });
+    }
+
+    const hashed = await hashPassword(password);
     const user = await prisma.user.create({
-      data: { username, password: hashed, role }
+      data: {
+        username,
+        password: hashed,
+        role,
+        lastPasswordChange: new Date()
+      }
     });
 
     // If creating a PLAYER, also create a Player entry linked to this user
@@ -605,9 +1281,9 @@ app.get('/api/admin/sessions/:name', requireOperator, async (req, res) => {
         players: true
       }
     });
-    
+
     if (!session) return res.status(404).json({ error: "Session not found" });
-    
+
     res.json(session);
   } catch (e) {
     console.error(e);
@@ -623,12 +1299,13 @@ app.delete('/api/admin/sessions/:name', requireAdmin, async (req, res) => {
     if (!session) return res.status(404).json({ error: "Session not found" });
 
     // Delete related data first
+    await prisma.playerAddRequest.deleteMany({ where: { sessionId: session.id } });
     await prisma.gameHand.deleteMany({ where: { sessionId: session.id } });
     await prisma.player.deleteMany({ where: { sessionId: session.id } });
-    
+
     // Delete the session
     await prisma.gameSession.delete({ where: { id: session.id } });
-    
+
     // Remove from active sessions if present
     if (activeSessions.has(name)) {
       activeSessions.delete(name);
@@ -641,136 +1318,389 @@ app.delete('/api/admin/sessions/:name', requireAdmin, async (req, res) => {
   }
 });
 
-app.post('/api/sessions', async (req, res) => {
-  const { name, totalRounds, players } = req.body; // players: [{ userId, seat, name }]
+// --- PLAYER ADDITION REQUESTS API ---
+
+// Operator: Request to add new players to a session
+app.post('/api/sessions/:name/player-requests', requireOperator, async (req, res) => {
+  const { name } = req.params;
+  const { playerNames } = req.body;
 
   try {
-    let session = await prisma.gameSession.findUnique({ where: { name } });
+    const session = await prisma.gameSession.findUnique({ where: { name } });
+    if (!session) return res.status(404).json({ error: "Session not found" });
+    if (!session.isActive) return res.status(400).json({ error: "Session is not active" });
 
-    if (session) {
-      if (!session.isActive) {
-        return res.status(400).json({ error: "Session name already used and finished." });
-      }
-      // If active, return existing (rejoin)
-    } else {
-      session = await prisma.gameSession.create({
-        data: { name, totalRounds, isActive: true }
-      });
+    // Get current player count
+    const currentPlayerCount = await prisma.player.count({ where: { sessionId: session.id } });
+    const pendingRequests = await prisma.playerAddRequest.count({
+      where: { sessionId: session.id, status: 'PENDING' }
+    });
 
-      // Create Initial Players if provided
-      if (players && players.length > 0) {
-        for (const p of players) {
-          if (p.userId) {
-            // Registered user player
-            await prisma.player.upsert({
-              where: { userId: p.userId },
-              update: { sessionId: session.id, seatPosition: p.seat, sessionBalance: 0 },
-              create: { name: p.name, userId: p.userId, sessionId: session.id, seatPosition: p.seat, sessionBalance: 0 }
-            });
-          } else {
-            // Guest player - create new entry
-            await prisma.player.create({
-              data: { 
-                name: p.name, 
-                sessionId: session.id, 
-                seatPosition: p.seat, 
-                sessionBalance: 0 
-              }
-            });
-          }
-        }
-      }
+    // Check if adding these players would exceed max (let's say 17 max players)
+    if (currentPlayerCount + pendingRequests + playerNames.length > 17) {
+      return res.status(400).json({ error: "Too many players. Maximum 17 players allowed per session." });
     }
 
-    // Initialize in-memory state if not present
-    if (!activeSessions.has(name)) {
-      // Fetch players from DB to populate state
-      const dbPlayers = await prisma.player.findMany({ where: { sessionId: session.id } });
-      const initialPlayers = dbPlayers.map(p => ({
-        id: p.id,
-        name: p.name,
-        sessionBalance: p.sessionBalance,
-        seat: p.seatPosition
-      }));
-
-      // Create GameManager instance
-      const manager = new GameManager(session.id, name, session.totalRounds);
-      manager.currentRound = session.currentRound || 1; // Default to 1 for new sessions
-      manager.setPlayers(initialPlayers);
-      
-      console.log(`[DEBUG] Session ${name} initialized with ${initialPlayers.length} players:`, initialPlayers);
-
-      // Hook up events
-      manager.on('state_change', (state) => {
-        io.to(name).emit('game_update', state);
-      });
-      manager.on('session_ended', async (data) => {
-        // Mark session as inactive in database
-        try {
-          await prisma.gameSession.update({
-            where: { name },
-            data: { isActive: false }
-          });
-          console.log(`[DEBUG] Session ${name} marked as complete`);
-        } catch (e) {
-          console.error('[ERROR] Failed to mark session as complete:', e);
-        }
-        
-        io.to(name).emit('session_ended', data);
-        activeSessions.delete(name);
-      });
-      manager.on('hand_complete', async (summary) => {
-        // Save hand to database
-        try {
-          const session = await prisma.gameSession.findUnique({ where: { name } });
-          if (session) {
-            // Save hand history - handle both SQLite (String) and PostgreSQL (Json)
-            const logsData = process.env.DATABASE_URL?.includes('sqlite') ? JSON.stringify([]) : [];
-            await prisma.gameHand.create({
-              data: {
-                winner: summary.winner.name,
-                potSize: summary.pot,
-                logs: logsData,
-                sessionId: session.id
-              }
-            });
-            
-            // Update player balances
-            for (const [playerId, change] of Object.entries(summary.netChanges)) {
-              const pid = parseInt(playerId);
-              await prisma.player.upsert({
-                where: { id: pid },
-                update: {
-                  sessionBalance: { increment: change }
-                },
-                create: {
-                  id: pid,
-                  name: "Player " + pid,
-                  sessionBalance: change,
-                  sessionId: session.id
-                }
-              });
-            }
-            
-            console.log(`[DEBUG] Hand saved for session ${name}`);
+    // Create requests for each player
+    const requests = await Promise.all(
+      playerNames.map(playerName =>
+        prisma.playerAddRequest.create({
+          data: {
+            sessionId: session.id,
+            playerName: playerName.trim(),
+            requestedBy: req.user.role
           }
-        } catch (e) {
-          console.error('[ERROR] Failed to save hand:', e);
-        }
-        
-        io.to(name).emit('game_update', { type: 'HAND_COMPLETE', ...summary });
-      });
+        })
+      )
+    );
 
-      activeSessions.set(name, manager);
-      console.log(`Initialized GameManager for session ${name}`);
-    }
-
-    res.json({ success: true, session });
+    res.json({ success: true, requests, message: `Requested to add ${playerNames.length} player(s)` });
   } catch (e) {
-    console.error(e);
-    res.status(500).json({ error: "Failed to create session" });
+    console.error('[ERROR] Failed to create player requests:', e);
+    res.status(500).json({ error: "Failed to create player requests" });
   }
 });
+
+// Get all pending player add requests (for Admin)
+app.get('/api/admin/player-requests', requireAdmin, async (req, res) => {
+  try {
+    const requests = await prisma.playerAddRequest.findMany({
+      where: { status: 'PENDING' },
+      include: {
+        session: {
+          select: { name: true, currentRound: true, totalRounds: true, isActive: true }
+        }
+      },
+      orderBy: { requestedAt: 'desc' }
+    });
+    res.json(requests);
+  } catch (e) {
+    console.error(e);
+    res.status(500).json({ error: "Failed to fetch player requests" });
+  }
+});
+
+// Get player add requests for a specific session (for Operator)
+app.get('/api/sessions/:name/player-requests', requireOperator, async (req, res) => {
+  const { name } = req.params;
+  try {
+    const session = await prisma.gameSession.findUnique({ where: { name } });
+    if (!session) return res.status(404).json({ error: "Session not found" });
+
+    const requests = await prisma.playerAddRequest.findMany({
+      where: { sessionId: session.id },
+      orderBy: { requestedAt: 'desc' }
+    });
+    res.json(requests);
+  } catch (e) {
+    console.error(e);
+    res.status(500).json({ error: "Failed to fetch player requests" });
+  }
+});
+
+// Admin: Approve or decline player add requests
+app.post('/api/admin/player-requests/:id/resolve', requireAdmin, async (req, res) => {
+  const { id } = req.params;
+  const { approved } = req.body;
+
+  try {
+    const request = await prisma.playerAddRequest.findUnique({
+      where: { id: parseInt(id) },
+      include: { session: true }
+    });
+
+    if (!request) return res.status(404).json({ error: "Request not found" });
+    if (request.status !== 'PENDING') return res.status(400).json({ error: "Request already resolved" });
+
+    // Update request status
+    await prisma.playerAddRequest.update({
+      where: { id: parseInt(id) },
+      data: {
+        status: approved ? 'APPROVED' : 'DECLINED',
+        resolvedAt: new Date(),
+        resolvedBy: req.user.role
+      }
+    });
+
+    if (approved) {
+      // Get current max seat position
+      const currentPlayers = await prisma.player.findMany({
+        where: { sessionId: request.sessionId },
+        orderBy: { seatPosition: 'desc' },
+        take: 1
+      });
+
+      const nextSeat = currentPlayers.length > 0 ? (currentPlayers[0].seatPosition || 0) + 1 : 1;
+
+      // Create the new player
+      const newPlayer = await prisma.player.create({
+        data: {
+          name: request.playerName,
+          sessionId: request.sessionId,
+          seatPosition: nextSeat,
+          sessionBalance: 0
+        }
+      });
+
+      // Add player to active GameManager if session is active
+      const manager = activeSessions.get(request.session.name);
+      if (manager) {
+        manager.gameState.players.push({
+          id: newPlayer.id,
+          name: newPlayer.name,
+          seat: newPlayer.seatPosition,
+          sessionBalance: 0,
+          status: 'BLIND',
+          folded: false,
+          invested: 0
+        });
+
+        // Emit update to all clients
+        io.to(request.session.name).emit('game_update', manager.getPublicState());
+      }
+
+      res.json({
+        success: true,
+        message: `Player "${request.playerName}" added to session`,
+        player: newPlayer
+      });
+    } else {
+      res.json({
+        success: true,
+        message: `Request to add "${request.playerName}" declined`
+      });
+    }
+  } catch (e) {
+    console.error(e);
+    res.status(500).json({ error: "Failed to resolve player request" });
+  }
+});
+
+// Admin: Bulk approve player requests for a session
+app.post('/api/admin/sessions/:name/approve-all-players', requireAdmin, async (req, res) => {
+  const { name } = req.params;
+
+  try {
+    const session = await prisma.gameSession.findUnique({ where: { name } });
+    if (!session) return res.status(404).json({ error: "Session not found" });
+
+    // Get all pending requests
+    const pendingRequests = await prisma.playerAddRequest.findMany({
+      where: { sessionId: session.id, status: 'PENDING' }
+    });
+
+    if (pendingRequests.length === 0) {
+      return res.json({ success: true, message: "No pending requests" });
+    }
+
+    // Get current max seat position
+    const currentPlayers = await prisma.player.findMany({
+      where: { sessionId: session.id },
+      orderBy: { seatPosition: 'desc' },
+      take: 1
+    });
+
+    let nextSeat = currentPlayers.length > 0 ? (currentPlayers[0].seatPosition || 0) + 1 : 1;
+    const addedPlayers = [];
+
+    // Process each request
+    for (const request of pendingRequests) {
+      // Update request
+      await prisma.playerAddRequest.update({
+        where: { id: request.id },
+        data: {
+          status: 'APPROVED',
+          resolvedAt: new Date(),
+          resolvedBy: req.user.role
+        }
+      });
+
+      // Create player
+      const newPlayer = await prisma.player.create({
+        data: {
+          name: request.playerName,
+          sessionId: session.id,
+          seatPosition: nextSeat++,
+          sessionBalance: 0
+        }
+      });
+
+      addedPlayers.push(newPlayer);
+    }
+
+    // Update GameManager
+    const manager = activeSessions.get(name);
+    if (manager) {
+      for (const player of addedPlayers) {
+        manager.gameState.players.push({
+          id: player.id,
+          name: player.name,
+          seat: player.seatPosition,
+          sessionBalance: 0,
+          status: 'BLIND',
+          folded: false,
+          invested: 0
+        });
+      }
+      io.to(name).emit('game_update', manager.getPublicState());
+    }
+
+    res.json({
+      success: true,
+      message: `Added ${addedPlayers.length} player(s) to session`,
+      players: addedPlayers
+    });
+  } catch (e) {
+    console.error(e);
+    res.status(500).json({ error: "Failed to approve players" });
+  }
+});
+
+app.post('/api/sessions', requireAuth, asyncHandler(async (req, res) => {
+  const { name, totalRounds, players } = req.body; // players: [{ userId, seat, name }]
+
+  // 1. Validate Input
+  if (!name || !totalRounds) {
+    return res.status(400).json({ error: "Session name and total rounds are required" });
+  }
+
+  // 2. Get Default Game Type (Teen Patti)
+  const gameType = await prisma.gameType.findUnique({
+    where: { code: 'teen-patti' }
+  });
+
+  if (!gameType) {
+    return res.status(500).json({ error: "System configuration error: Default game type not found" });
+  }
+
+  // 3. Create or Join Session
+  let session = await prisma.gameSession.findUnique({ where: { name } });
+
+  if (session) {
+    if (!session.isActive) {
+      return res.status(400).json({ error: "Session name already used and finished." });
+    }
+    // If active, return existing (rejoin) - logic continues below
+  } else {
+    // Create new session with required fields
+    session = await prisma.gameSession.create({
+      data: {
+        name,
+        totalRounds,
+        isActive: true,
+        gameTypeId: gameType.id,
+        createdBy: req.user.id,
+        status: 'waiting',
+        isPublic: false
+      }
+    });
+
+    // Create Initial Players if provided
+    if (players && players.length > 0) {
+      for (const p of players) {
+        if (p.userId) {
+          // Registered user player
+          await prisma.player.upsert({
+            where: { userId: p.userId },
+            update: { sessionId: session.id, seatPosition: p.seat, sessionBalance: 0 },
+            create: { name: p.name, userId: p.userId, sessionId: session.id, seatPosition: p.seat, sessionBalance: 0 }
+          });
+        } else {
+          // Guest player - create new entry
+          await prisma.player.create({
+            data: {
+              name: p.name,
+              sessionId: session.id,
+              seatPosition: p.seat,
+              sessionBalance: 0
+            }
+          });
+        }
+      }
+    }
+  }
+
+  // Initialize in-memory state if not present
+  if (!activeSessions.has(name)) {
+    // Fetch players from DB to populate state
+    const dbPlayers = await prisma.player.findMany({ where: { sessionId: session.id } });
+    const initialPlayers = dbPlayers.map(p => ({
+      id: p.id,
+      name: p.name,
+      sessionBalance: p.sessionBalance,
+      seat: p.seatPosition
+    }));
+
+    // Create GameManager instance
+    const manager = new GameManager(session.id, name, session.totalRounds);
+    manager.currentRound = session.currentRound || 1; // Default to 1 for new sessions
+    manager.setPlayers(initialPlayers);
+
+    console.log(`[DEBUG] Session ${name} initialized with ${initialPlayers.length} players:`, initialPlayers);
+
+    // Hook up events
+    manager.on('state_change', (state) => {
+      io.to(name).emit('game_update', state);
+    });
+    manager.on('session_ended', async (data) => {
+      // Mark session as inactive in database
+      try {
+        await prisma.gameSession.update({
+          where: { name },
+          data: { isActive: false }
+        });
+        console.log(`[DEBUG] Session ${name} marked as complete`);
+      } catch (e) {
+        console.error('[ERROR] Failed to mark session as complete:', e);
+      }
+
+      io.to(name).emit('session_ended', data);
+      activeSessions.delete(name);
+    });
+    manager.on('hand_complete', async (summary) => {
+      // Save hand to database
+      try {
+        const session = await prisma.gameSession.findUnique({ where: { name } });
+        if (session) {
+          // Save hand history
+          const logsData = process.env.DATABASE_URL?.includes('sqlite') ? JSON.stringify([]) : [];
+          await prisma.gameHand.create({
+            data: {
+              winner: summary.winner.name,
+              potSize: summary.pot,
+              logs: logsData,
+              sessionId: session.id
+            }
+          });
+
+          // Update player balances
+          for (const [playerId, change] of Object.entries(summary.netChanges)) {
+            const pid = parseInt(playerId);
+            await prisma.player.upsert({
+              where: { id: pid },
+              update: { sessionBalance: { increment: change } },
+              create: {
+                name: "Player " + pid,
+                userId: null,
+                sessionId: session.id,
+                seatPosition: 0,
+                sessionBalance: change
+              }
+            });
+          }
+        }
+      } catch (e) {
+        console.error('[ERROR] Failed to save hand:', e);
+      }
+      io.to(name).emit('game_update', { type: 'HAND_COMPLETE', ...summary });
+    });
+
+    activeSessions.set(name, manager);
+    console.log(`Initialized GameManager for session ${name}`);
+  }
+
+  res.json({ success: true, session });
+}));
 
 // 5. REAL-TIME SOCKET
 
@@ -861,6 +1791,21 @@ io.on('connection', (socket) => {
             manager.on('hand_complete', (summary) => {
               io.to(sessionName).emit('game_update', { type: 'HAND_COMPLETE', ...summary });
             });
+            manager.on('session_ended', async (data) => {
+              // Mark session as inactive in database
+              try {
+                await prisma.gameSession.update({
+                  where: { name: sessionName },
+                  data: { isActive: false }
+                });
+                console.log(`[DEBUG] Session ${sessionName} marked as complete`);
+              } catch (e) {
+                console.error('[ERROR] Failed to mark session as complete:', e);
+              }
+
+              io.to(sessionName).emit('session_ended', data);
+              activeSessions.delete(sessionName);
+            });
 
             activeSessions.set(sessionName, manager);
             console.log(`Initialized GameManager for ${sessionName}`);
@@ -901,7 +1846,7 @@ io.on('connection', (socket) => {
       console.log('[DEBUG] No manager found for session:', action.sessionName);
       return;
     }
-    
+
     console.log('[DEBUG] Manager found. Current phase:', manager.gameState.phase, 'Players:', manager.gameState.players.length);
 
     if (action.type === 'START_GAME') {
@@ -917,12 +1862,50 @@ io.on('connection', (socket) => {
 
   // End Session
   socket.on('end_session', async ({ sessionName }) => {
-    if (!isOperatorOrAdmin()) return;
-    const manager = activeSessions.get(sessionName);
-    if (manager) {
-      await prisma.gameSession.update({ where: { id: manager.sessionId }, data: { isActive: false } });
-      activeSessions.delete(sessionName);
-      io.to(sessionName).emit('session_ended', { reason: 'OPERATOR_ENDED' });
+    if (!isOperatorOrAdmin()) {
+      socket.emit('error_message', 'Unauthorized to end session');
+      return;
+    }
+
+    try {
+      // Find session in database
+      const session = await prisma.gameSession.findUnique({ where: { name: sessionName } });
+      if (!session) {
+        socket.emit('error_message', 'Session not found');
+        return;
+      }
+
+      // Update session to inactive
+      await prisma.gameSession.update({
+        where: { id: session.id },
+        data: { isActive: false }
+      });
+
+      // Get final round info from manager if available
+      const manager = activeSessions.get(sessionName);
+      let finalRound = session.currentRound;
+      let totalRounds = session.totalRounds;
+
+      if (manager) {
+        finalRound = manager.currentRound;
+        totalRounds = manager.totalRounds;
+        activeSessions.delete(sessionName);
+      }
+
+      // Notify all clients
+      io.to(sessionName).emit('session_ended', {
+        reason: 'OPERATOR_ENDED',
+        finalRound,
+        totalRounds
+      });
+
+      // Confirm to operator
+      socket.emit('error_message', 'Session ended successfully');
+
+      console.log(`[DEBUG] Session ${sessionName} manually ended by operator`);
+    } catch (e) {
+      console.error('[ERROR] Failed to end session:', e);
+      socket.emit('error_message', 'Failed to end session: ' + e.message);
     }
   });
 
@@ -940,7 +1923,7 @@ app.use('/api/{*path}', (req, res) => {
 if (process.env.NODE_ENV === 'production') {
   const path = require('path');
   app.use(express.static(path.join(__dirname, '../client/dist')));
-  
+
   app.get('/{*splat}', (req, res) => {
     res.sendFile(path.join(__dirname, '../client/dist/index.html'));
   });
