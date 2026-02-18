@@ -72,10 +72,26 @@ const Viewer = () => {
             setLogs(prev => [...prev, `--- Session Ended: ${reason} ---`]);
         });
 
+        // V2 FIX: Handle access denied
+        socket.on('access_denied', () => {
+            setConnectionStatus('Access Denied');
+            setLogs(prev => [...prev, '--- Access Denied by Operator ---']);
+            setTimeout(() => navigate('/'), 3000);
+        });
+
+        // Handle access granted
+        socket.on('access_granted', () => {
+            setConnectionStatus('Connected');
+            setLogs(prev => [...prev, '--- Access Granted ---']);
+        });
+
         return () => {
             socket.off('connect_error');
             socket.off('game_update');
             socket.off('session_ended');
+            socket.off('access_denied');
+            // V1 FIX: Disconnect socket when component unmounts
+            socket.disconnect();
         };
     }, [sessionName, socket, navigate]);
 

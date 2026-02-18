@@ -518,25 +518,52 @@ class GameManager extends EventEmitter {
 
     // --- HELPERS ---
     rotateTurn() {
+        // E2 FIX: Check if only one player remains before rotating
+        const remaining = this.gameState.gamePlayers.filter(p => !p.folded);
+        if (remaining.length === 1) {
+            this.endHand(remaining[0]);
+            return;
+        }
+        
         this.gameState.activePlayerIndex = this.getNextActiveIndex(this.gameState.activePlayerIndex);
     }
 
     getNextActiveIndex(currentIndex) {
+        // E2 FIX: Handle edge case where no players or all folded
+        const activePlayers = this.gameState.gamePlayers.filter(p => !p.folded);
+        if (activePlayers.length === 0) return currentIndex;
+        if (activePlayers.length === 1) {
+            return this.gameState.gamePlayers.findIndex(p => p.id === activePlayers[0].id);
+        }
+        
         let next = (currentIndex + 1) % this.gameState.gamePlayers.length;
         let p = this.gameState.gamePlayers[next];
-        while (p.folded) {
+        let attempts = 0;
+        // E2 FIX: Prevent infinite loop with max attempts
+        while (p.folded && attempts < this.gameState.gamePlayers.length) {
             next = (next + 1) % this.gameState.gamePlayers.length;
             p = this.gameState.gamePlayers[next];
+            attempts++;
         }
         return next;
     }
 
     getPreviousActiveIndex(currentIndex) {
+        // E2 FIX: Handle edge case where no players or all folded
+        const activePlayers = this.gameState.gamePlayers.filter(p => !p.folded);
+        if (activePlayers.length === 0) return currentIndex;
+        if (activePlayers.length === 1) {
+            return this.gameState.gamePlayers.findIndex(p => p.id === activePlayers[0].id);
+        }
+        
         let prev = (currentIndex - 1 + this.gameState.gamePlayers.length) % this.gameState.gamePlayers.length;
         let p = this.gameState.gamePlayers[prev];
-        while (p.folded) {
+        let attempts = 0;
+        // E2 FIX: Prevent infinite loop with max attempts
+        while (p.folded && attempts < this.gameState.gamePlayers.length) {
             prev = (prev - 1 + this.gameState.gamePlayers.length) % this.gameState.gamePlayers.length;
             p = this.gameState.gamePlayers[prev];
+            attempts++;
         }
         return prev;
     }

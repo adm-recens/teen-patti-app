@@ -123,8 +123,11 @@ const AdminDashboard = () => {
     const handleApprovePlayerRequest = async (requestId) => {
         setRequestsLoading(true);
         try {
-            const res = await fetch(`${API_URL}/api/admin/player-requests/${requestId}/approve`, {
+            // A2 FIX: Use correct endpoint with approved flag
+            const res = await fetch(`${API_URL}/api/admin/player-requests/${requestId}/resolve`, {
                 method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ approved: true }),
                 credentials: 'include'
             });
             if (res.ok) {
@@ -143,8 +146,11 @@ const AdminDashboard = () => {
     const handleDeclinePlayerRequest = async (requestId) => {
         setRequestsLoading(true);
         try {
-            const res = await fetch(`${API_URL}/api/admin/player-requests/${requestId}/decline`, {
+            // A2 FIX: Use correct endpoint with approved flag
+            const res = await fetch(`${API_URL}/api/admin/player-requests/${requestId}/resolve`, {
                 method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ approved: false }),
                 credentials: 'include'
             });
             if (res.ok) {
@@ -162,7 +168,8 @@ const AdminDashboard = () => {
     const handleApproveAllRequests = async (sessionName) => {
         setRequestsLoading(true);
         try {
-            const res = await fetch(`${API_URL}/api/admin/sessions/${sessionName}/approve-all-requests`, {
+            // A2 FIX: Use correct endpoint
+            const res = await fetch(`${API_URL}/api/admin/sessions/${sessionName}/approve-all-players`, {
                 method: 'POST',
                 credentials: 'include'
             });

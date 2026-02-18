@@ -200,6 +200,86 @@ const TeenPattiHelp = () => {
           ))}
         </div>
 
+        {/* Special Rules Section */}
+        <div className="mt-8 grid md:grid-cols-2 gap-6">
+          {/* A-2-3 Rule */}
+          <div className="bg-gradient-to-br from-amber-900/50 to-orange-900/50 rounded-2xl border border-amber-500/30 p-6">
+            <h3 className="text-xl font-black text-white mb-4 flex items-center gap-2">
+              <span className="text-2xl">🃏</span> Special A-2-3 Rule
+            </h3>
+            <div className="space-y-3 text-slate-300">
+              <p>A-2-3 is the <strong className="text-amber-400">LOWEST</strong> straight/sequence, not the highest!</p>
+              <div className="flex gap-2 justify-center my-4">
+                <div className="w-12 h-16 bg-white rounded-lg shadow flex flex-col items-center justify-center border-2 border-slate-200">
+                  <span className="text-lg font-bold text-slate-800">A</span>
+                  <span className="text-xl text-slate-400">♠</span>
+                </div>
+                <div className="w-12 h-16 bg-white rounded-lg shadow flex flex-col items-center justify-center border-2 border-slate-200">
+                  <span className="text-lg font-bold text-slate-800">2</span>
+                  <span className="text-xl text-slate-400">♠</span>
+                </div>
+                <div className="w-12 h-16 bg-white rounded-lg shadow flex flex-col items-center justify-center border-2 border-slate-200">
+                  <span className="text-lg font-bold text-slate-800">3</span>
+                  <span className="text-xl text-slate-400">♠</span>
+                </div>
+              </div>
+              <p className="text-sm text-slate-400">
+                Ranking: <strong className="text-white">A-K-Q &gt; K-Q-J &gt; ... &gt; 4-3-2 &gt; A-2-3</strong>
+              </p>
+            </div>
+          </div>
+
+          {/* Side Show Rules */}
+          <div className="bg-gradient-to-br from-blue-900/50 to-indigo-900/50 rounded-2xl border border-blue-500/30 p-6">
+            <h3 className="text-xl font-black text-white mb-4 flex items-center gap-2">
+              <span className="text-2xl">👁️</span> Side Show Rules
+            </h3>
+            <div className="space-y-2 text-slate-300 text-sm">
+              <p>• <strong className="text-blue-400">Who can request:</strong> Only SEEN players</p>
+              <p>• <strong className="text-blue-400">Target:</strong> Previous active player who is also SEEN</p>
+              <p>• <strong className="text-blue-400">Cost:</strong> Equal to current stake</p>
+              <p>• <strong className="text-blue-400">Process:</strong> Operator compares hands privately</p>
+              <p>• <strong className="text-blue-400">Result:</strong> Loser folds, stake stays the same</p>
+              <p>• <strong className="text-red-400">Cannot request:</strong> Against BLIND players</p>
+            </div>
+          </div>
+        </div>
+
+        {/* Force Show & Betting */}
+        <div className="mt-6 grid md:grid-cols-2 gap-6">
+          {/* Force Show */}
+          <div className="bg-gradient-to-br from-red-900/50 to-rose-900/50 rounded-2xl border border-red-500/30 p-6">
+            <h3 className="text-xl font-black text-white mb-4 flex items-center gap-2">
+              <span className="text-2xl">⚡</span> Force Show Rules
+            </h3>
+            <div className="space-y-2 text-slate-300 text-sm">
+              <p>• <strong className="text-red-400">When:</strong> SEEN player vs BLIND player (1-2 blinds left)</p>
+              <p>• <strong className="text-white">If SEEN wins:</strong> Normal win, blind player folds</p>
+              <p>• <strong className="text-red-400">If BLIND wins:</strong> SEEN player pays <strong>2× penalty</strong> and folds!</p>
+              <div className="mt-3 p-3 bg-red-950/50 rounded-lg border border-red-500/20">
+                <p className="text-red-300 text-xs">
+                  ⚠️ Risky move! If you challenge a blind player and lose, you pay double and fold.
+                </p>
+              </div>
+            </div>
+          </div>
+
+          {/* Betting Structure */}
+          <div className="bg-gradient-to-br from-green-900/50 to-emerald-900/50 rounded-2xl border border-green-500/30 p-6">
+            <h3 className="text-xl font-black text-white mb-4 flex items-center gap-2">
+              <span className="text-2xl">💰</span> Betting Structure
+            </h3>
+            <div className="space-y-2 text-slate-300 text-sm">
+              <p>• <strong className="text-green-400">Boot:</strong> 5 chips (collected from all at start)</p>
+              <p>• <strong className="text-green-400">Initial Stake:</strong> 20 chips</p>
+              <p>• <strong className="text-white">BLIND bet:</strong> ½ of current stake</p>
+              <p>• <strong className="text-white">SEEN bet (Chaal):</strong> Full current stake</p>
+              <p>• <strong className="text-green-400">Raise:</strong> Double the current stake</p>
+              <p>• <strong className="text-slate-400">Stake stays</strong> after Side Show</p>
+            </div>
+          </div>
+        </div>
+
         {/* Tie Breaker Rules */}
         <div className="mt-8 bg-gradient-to-br from-purple-900/50 to-pink-900/50 rounded-2xl border border-purple-500/30 p-6">
           <h3 className="text-xl font-black text-white mb-4">Tie Breaker Rules</h3>

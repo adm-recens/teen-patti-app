@@ -2,12 +2,14 @@ import React, { useState, useEffect, useRef } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import { Eye, LogOut, Play, Trash2, User, Check, X, ShieldAlert, Edit3, Plus, Trophy, UserPlus, Send, CheckCircle, AlertCircle } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
+import { useToast } from '../context/ToastContext';
 import { API_URL } from '../config';
 
 const GameRoom = () => {
     const { sessionName } = useParams();
     const navigate = useNavigate();
     const { user, socket, logout } = useAuth();
+    const toast = useToast();
     const [connectionError, setConnectionError] = useState(null);
 
     // Local Presentation State
@@ -122,7 +124,7 @@ const GameRoom = () => {
             setShowSessionSummary(true);
         });
 
-        socket.on('error_message', (msg) => alert(`Error: ${msg}`));
+        socket.on('error_message', (msg) => toast.error(msg));
 
         return () => {
             socket.off('connect_error');
@@ -151,7 +153,10 @@ const GameRoom = () => {
     const handleBet = (amount = null, isDouble = false) => {
         // Validation handled on server, but basic client check is good UX
         const min = isDouble ? currentStake * 2 : currentStake;
-        if (amount && parseInt(amount) < min) return alert(`Minimum bid is ${min}`);
+        if (amount && parseInt(amount) < min) {
+            toast.warning(`Minimum bid is ${min}`);
+            return;
+        }
         sendGameAction('BET', { amount: amount ? parseInt(amount) : null, isDouble });
     };
 
@@ -183,7 +188,7 @@ const GameRoom = () => {
             // Regular show with 2 players
             sendGameAction('SHOW');
         } else {
-            alert('Force Show only allowed when 1 or 2 blind players remain');
+            toast.info('Force Show only allowed when 1 or 2 blind players remain');
         }
     };
     const handleShowSelect = (targetId) => {
@@ -266,11 +271,36 @@ const GameRoom = () => {
         }
     };
 
+    // D3 FIX: Validate viewer name
+    const validateViewerName = (name) => {
+        if (!name || name.trim().length === 0) {
+            return { valid: false, error: "Please enter your name" };
+        }
+        if (name.trim().length < 2) {
+            return { valid: false, error: "Name must be at least 2 characters" };
+        }
+        if (name.trim().length > 30) {
+            return { valid: false, error: "Name must be less than 30 characters" };
+        }
+        // Basic profanity filter (common inappropriate words)
+        const inappropriateWords = ['admin', 'operator', 'system', 'moderator', 'support'];
+        const lowerName = name.toLowerCase();
+        if (inappropriateWords.some(word => lowerName.includes(word))) {
+            return { valid: false, error: "Please choose a different name" };
+        }
+        return { valid: true };
+    };
+
     // Viewer Logic
     const requestAccess = () => {
-        if (!viewerName) return;
+        // D3 FIX: Validate viewer name before requesting access
+        const validation = validateViewerName(viewerName);
+        if (!validation.valid) {
+            toast.error(validation.error);
+            return;
+        }
         setAccessStatus('PENDING');
-        socket.emit('request_access', { sessionName, name: viewerName });
+        socket.emit('request_access', { sessionName, name: viewerName.trim() });
     };
     const resolveViewerRequest = (sid, approved) => {
         socket.emit('resolve_access', { sessionName, viewerId: sid, approved });
@@ -283,8 +313,9 @@ const GameRoom = () => {
     // 0. Connection Error
     if (connectionError) return <div className="h-screen bg-black text-white flex flex-col gap-4 items-center justify-center p-8 text-center"><ShieldAlert className="text-red-500" size={48} /><h2 className="text-2xl font-bold">{connectionError}</h2><button onClick={() => window.location.reload()} className="bg-blue-600 px-4 py-2 rounded">Retry</button></div>;
 
-    // 1. Viewer Request
-    if (user?.role === 'VIEWER' && accessStatus !== 'GRANTED') {
+    // 1. Viewer Request - V4 FIX: All non-operator/admin users must request access
+    const isOperatorOrAdmin = user?.role === 'OPERATOR' || user?.role === 'ADMIN';
+    if (!isOperatorOrAdmin && accessStatus !== 'GRANTED') {
         return (
             <div className="min-h-screen bg-slate-900 flex items-center justify-center p-4">
                 <div className="bg-white p-8 rounded-xl max-w-sm w-full text-center">
@@ -308,6 +339,48 @@ const GameRoom = () => {
     // DEBUG: Show current state
     console.log('[CLIENT DEBUG] phase:', phase, 'user.role:', user?.role, 'players:', players.length, 'gamePlayers:', gamePlayers.length);
 
+    // Invite Link Component
+    const InviteLinkBox = () => {
+        const inviteUrl = `${window.location.origin}/game/${sessionName}`;
+        const [copied, setCopied] = useState(false);
+        
+        const copyToClipboard = () => {
+            navigator.clipboard.writeText(inviteUrl);
+            setCopied(true);
+            toast.success('Invite link copied to clipboard!');
+            setTimeout(() => setCopied(false), 2000);
+        };
+        
+        return (
+            <div className="bg-gradient-to-r from-purple-50 to-blue-50 p-4 rounded-xl border border-purple-200 mb-6">
+                <h3 className="font-bold text-slate-800 mb-2 flex items-center gap-2">
+                    <span className="text-xl">🔗</span> Share Invite Link
+                </h3>
+                <div className="flex gap-2">
+                    <input 
+                        type="text" 
+                        value={inviteUrl} 
+                        readOnly 
+                        className="flex-1 bg-white border border-slate-200 rounded-lg px-3 py-2 text-sm text-slate-600"
+                    />
+                    <button 
+                        onClick={copyToClipboard}
+                        className={`px-4 py-2 rounded-lg font-bold text-sm transition-all ${
+                            copied 
+                                ? 'bg-green-500 text-white' 
+                                : 'bg-purple-600 text-white hover:bg-purple-700'
+                        }`}
+                    >
+                        {copied ? 'Copied!' : 'Copy'}
+                    </button>
+                </div>
+                <p className="text-xs text-slate-500 mt-2">
+                    Share this link with viewers to let them watch the game
+                </p>
+            </div>
+        );
+    };
+
     // 3. Setup Phase (Operator/Admin Only)
     const activePlayer = gamePlayers[activePlayerIndex];
     const isOperatorOrAdmin = user?.role === 'OPERATOR' || user?.role === 'ADMIN';
@@ -322,6 +395,8 @@ const GameRoom = () => {
                             <button onClick={handleLogout} className="bg-white border px-3 py-2 rounded-lg font-bold text-sm">Logout</button>
                         </div>
                     </div>
+
+                    <InviteLinkBox />
 
                     <div className="bg-white p-6 rounded-2xl shadow-xl shadow-slate-200/50 border border-slate-100 mb-6">
                         <div className="flex justify-between mb-4">
@@ -399,6 +474,18 @@ const GameRoom = () => {
                 </div>
             </div>
 
+            {/* Current Turn Banner */}
+            {phase === 'ACTIVE' && activePlayer && (
+                <div className="bg-gradient-to-r from-yellow-600 to-amber-600 text-white px-4 py-2 text-center shadow-lg">
+                    <div className="flex items-center justify-center gap-2">
+                        <span className="animate-pulse">●</span>
+                        <span className="font-bold">Current Turn:</span>
+                        <span className="text-xl font-black">{activePlayer.name}</span>
+                        <span className="text-sm opacity-80">({activePlayer.status})</span>
+                    </div>
+                </div>
+            )}
+
             {/* Table */}
             <div className="flex-1 overflow-auto p-4 z-10 custom-scrollbar">
                 <div className="grid grid-cols-2 lg:grid-cols-4 gap-4 max-w-6xl mx-auto">
@@ -409,7 +496,7 @@ const GameRoom = () => {
 
                         return (
                             <div key={p.id || idx} className={`relative p-4 rounded-2xl border-2 transition-all duration-300 flex flex-col justify-between min-h-[140px]
-                                ${isActive ? 'border-yellow-500 bg-slate-800 shadow-[0_0_30px_rgba(234,179,8,0.15)] scale-[1.02]' : 'border-slate-800 bg-slate-800/50 opacity-90'}
+                                ${isActive ? 'border-yellow-500 bg-slate-800 shadow-[0_0_30px_rgba(234,179,8,0.3)] scale-[1.02] ring-2 ring-yellow-500/50' : 'border-slate-800 bg-slate-800/50 opacity-90'}
                                 ${p.folded ? 'opacity-40 grayscale border-slate-800' : ''}
                                 ${(isTarget || isRequester) ? 'ring-2 ring-blue-500 z-20' : ''}
                              `}>
@@ -426,7 +513,14 @@ const GameRoom = () => {
                                     <div className="font-mono text-xl text-yellow-500/80">{p.invested}</div>
                                 </div>
 
-                                {isActive && !p.folded && <div className="absolute -top-3 -right-3 w-6 h-6 bg-yellow-500 rounded-full animate-bounce"></div>}
+                                {isActive && !p.folded && (
+                                    <>
+                                        <div className="absolute -top-3 -right-3 w-6 h-6 bg-yellow-500 rounded-full animate-bounce shadow-lg"></div>
+                                        <div className="absolute -bottom-2 left-1/2 -translate-x-1/2 bg-yellow-500 text-black text-[10px] font-bold px-2 py-0.5 rounded-full uppercase tracking-wide">
+                                            Turn
+                                        </div>
+                                    </>
+                                )}
                             </div>
                         );
                     })}

@@ -1215,7 +1215,7 @@ app.get('/api/admin/users', requireAdmin, async (req, res) => {
 
 app.post('/api/admin/users', requireAdmin, async (req, res) => {
   try {
-    const { username, password, role } = req.body;
+    const { username, password, role, allowedGames } = req.body;
 
     // Validate Role
     const validRoles = ['ADMIN', 'OPERATOR', 'PLAYER', 'GUEST'];
@@ -1250,6 +1250,24 @@ app.post('/api/admin/users', requireAdmin, async (req, res) => {
           userId: user.id
         }
       });
+    }
+
+    // A1 FIX: If creating an OPERATOR with allowedGames, create UserGamePermission records
+    if (role === 'OPERATOR' && allowedGames && allowedGames.length > 0) {
+      try {
+        await prisma.userGamePermission.createMany({
+          data: allowedGames.map(gameId => ({
+            userId: user.id,
+            gameTypeId: parseInt(gameId),
+            canCreate: true,
+            canManage: true
+          }))
+        });
+        console.log(`[DEBUG] Created ${allowedGames.length} game permissions for operator ${user.username}`);
+      } catch (permError) {
+        console.error('[ERROR] Failed to create game permissions:', permError);
+        // Don't fail the user creation if permissions fail, just log it
+      }
     }
 
     res.json({ success: true, user: { id: user.id, username: user.username } });
@@ -1631,20 +1649,40 @@ app.post('/api/admin/sessions/:name/approve-all-players', requireAdmin, async (r
 });
 
 app.post('/api/sessions', requireAuth, asyncHandler(async (req, res) => {
-  const { name, totalRounds, players } = req.body; // players: [{ userId, seat, name }]
+  const { name, totalRounds, players, gameCode } = req.body; // players: [{ userId, seat, name }]
 
   // 1. Validate Input
   if (!name || !totalRounds) {
     return res.status(400).json({ error: "Session name and total rounds are required" });
   }
 
-  // 2. Get Default Game Type (Teen Patti)
+  // 2. Get Game Type
+  const gameTypeCode = gameCode || 'teen-patti';
   const gameType = await prisma.gameType.findUnique({
-    where: { code: 'teen-patti' }
+    where: { code: gameTypeCode }
   });
 
   if (!gameType) {
-    return res.status(500).json({ error: "System configuration error: Default game type not found" });
+    return res.status(400).json({ error: "Invalid game type" });
+  }
+
+  // C2 FIX: Check if user has permission to create sessions for this game
+  // Admins can always create, others need explicit permission
+  if (req.user.role !== 'ADMIN') {
+    const userPermission = await prisma.userGamePermission.findFirst({
+      where: {
+        userId: req.user.id,
+        gameTypeId: gameType.id,
+        canCreate: true
+      }
+    });
+    
+    if (!userPermission) {
+      return res.status(403).json({ 
+        error: "Access denied", 
+        message: "You don't have permission to create sessions for this game" 
+      });
+    }
   }
 
   // 3. Create or Join Session
@@ -1672,12 +1710,18 @@ app.post('/api/sessions', requireAuth, asyncHandler(async (req, res) => {
     // Create Initial Players if provided
     if (players && players.length > 0) {
       for (const p of players) {
+        // D1 FIX: Always create new player record for each session
+        // Removed upsert to allow same user to be player in multiple sessions
         if (p.userId) {
           // Registered user player
-          await prisma.player.upsert({
-            where: { userId: p.userId },
-            update: { sessionId: session.id, seatPosition: p.seat, sessionBalance: 0 },
-            create: { name: p.name, userId: p.userId, sessionId: session.id, seatPosition: p.seat, sessionBalance: 0 }
+          await prisma.player.create({
+            data: { 
+              name: p.name, 
+              userId: p.userId, 
+              sessionId: session.id, 
+              seatPosition: p.seat, 
+              sessionBalance: 0 
+            }
           });
         } else {
           // Guest player - create new entry
@@ -2011,9 +2055,49 @@ io.on('connection', (socket) => {
   });
 
   // Viewer Access Control
-  socket.on('request_access', ({ sessionName, name }) => {
+  socket.on('request_access', async ({ sessionName, name }) => {
     if (!sessionName || !name) {
       socket.emit('error_message', 'Session name and viewer name are required');
+      return;
+    }
+
+    // D2 FIX: Validate that session exists and is active
+    try {
+      const session = await prisma.gameSession.findUnique({ 
+        where: { name: sessionName },
+        select: { id: true, isActive: true }
+      });
+      
+      if (!session) {
+        socket.emit('error_message', 'Session not found');
+        return;
+      }
+      
+      if (!session.isActive) {
+        socket.emit('error_message', 'This session has ended');
+        return;
+      }
+    } catch (e) {
+      console.error('[ERROR] Failed to validate session:', e);
+      socket.emit('error_message', 'Failed to validate session');
+      return;
+    }
+
+    // D3 FIX: Validate viewer name (server-side)
+    const trimmedName = name.trim();
+    if (trimmedName.length < 2) {
+      socket.emit('error_message', 'Name must be at least 2 characters');
+      return;
+    }
+    if (trimmedName.length > 30) {
+      socket.emit('error_message', 'Name must be less than 30 characters');
+      return;
+    }
+    // Basic profanity/reserved word filter
+    const inappropriateWords = ['admin', 'operator', 'system', 'moderator', 'support'];
+    const lowerName = trimmedName.toLowerCase();
+    if (inappropriateWords.some(word => lowerName.includes(word))) {
+      socket.emit('error_message', 'Please choose a different name');
       return;
     }
 
@@ -2031,17 +2115,17 @@ io.on('connection', (socket) => {
     // Add to pending requests
     requests.push({
       socketId: socket.id,
-      name: name,
+      name: trimmedName,
       timestamp: Date.now()
     });
 
     // Notify operators in the session
     socket.to(sessionName).emit('viewer_requested', {
       socketId: socket.id,
-      name: name
+      name: trimmedName
     });
 
-    console.log(`[DEBUG] Viewer ${name} (${socket.id}) requested access to ${sessionName}`);
+    console.log(`[DEBUG] Viewer ${trimmedName} (${socket.id}) requested access to ${sessionName}`);
   });
 
   socket.on('resolve_access', ({ sessionName, viewerId, approved }) => {
